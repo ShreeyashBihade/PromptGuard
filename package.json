@@ -1,0 +1,47 @@
+{
+  "name": "promptguard",
+  "displayName": "PromptGuard",
+  "description": "Local-first prompt linting, scoring and optimization for VS Code.",
+  "version": "0.1.0",
+  "publisher": "promptguard",
+  "license": "MIT",
+  "engines": { "vscode": "^1.105.0" },
+  "categories": ["Other", "Machine Learning"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "promptguard.analyze", "title": "PromptGuard: Analyze Current Prompt" },
+      { "command": "promptguard.openDashboard", "title": "PromptGuard: Open Dashboard" },
+      { "command": "promptguard.optimize", "title": "PromptGuard: Preview Optimization" },
+      { "command": "promptguard.showHistory", "title": "PromptGuard: Show History" },
+      { "command": "promptguard.openSettings", "title": "PromptGuard: Open Settings" }
+      ,{ "command": "promptguard.openChat", "title": "PromptGuard: Open Local Chat" }
+      ,{ "command": "promptguard.configureGroq", "title": "PromptGuard: Configure Groq" }
+    ],
+    "configuration": {
+      "title": "PromptGuard",
+      "properties": {
+        "promptguard.enabled": { "type": "boolean", "default": true, "description": "Enable PromptGuard analysis." },
+        "promptguard.analyzeOnSave": { "type": "boolean", "default": true, "description": "Analyze supported prompt files when saved." },
+        "promptguard.minimumPromptLength": { "type": "number", "default": 20, "minimum": 0, "description": "Minimum number of characters to analyze." },
+        "promptguard.disabledRules": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Rule IDs to disable in this workspace." },
+        "promptguard.ignoreComments": { "type": "boolean", "default": false, "description": "Ignore comment-only lines during analysis." },
+        "promptguard.modelPricing": { "type": "array", "default": [], "description": "Optional local pricing profiles in USD per million tokens. Match against model vendor, ID, or family.", "items": { "type": "object", "required": ["match", "inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "match": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } } }
+      }
+    },
+    "viewsContainers": { "activitybar": [{ "id": "promptguard", "title": "PromptGuard", "icon": "resources/promptguard.svg" }] },
+    "views": { "promptguard": [{ "id": "promptguard.navigator", "name": "PromptGuard" }] },
+    "chatParticipants": [{ "id": "promptguard.analyzer", "name": "promptguard", "fullName": "PromptGuard", "description": "Analyze a prompt before you send it to a model", "isSticky": true, "commands": [{ "name": "analyze", "description": "Analyze prompt quality, safety, and model-aware token usage" }] }],
+    "languageModelChatProviders": [{ "vendor": "promptguard-groq", "displayName": "PromptGuard Groq", "managementCommand": "promptguard.configureGroq" }],
+    "menus": { "editor/context": [{ "command": "promptguard.analyze", "group": "navigation@100" }] }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
+    "watch": "npm run compile -- --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck"
+  },
+  "devDependencies": { "@types/node": "^20.14.10", "@types/vscode": "^1.90.0", "esbuild": "^0.23.0", "typescript": "^5.5.4" },
+  "dependencies": { "chart.js": "^4.4.3" }
+}
