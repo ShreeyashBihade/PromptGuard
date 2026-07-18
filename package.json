@@ -23,7 +23,7 @@
       "title": "PromptGuard",
       "properties": {
         "promptguard.enabled": { "type": "boolean", "default": true, "description": "Enable PromptGuard analysis." },
-        "promptguard.analyzeOnSave": { "type": "boolean", "default": true, "description": "Analyze supported prompt files when saved." },
+        "promptguard.analyzeOnSave": { "type": "boolean", "default": false, "description": "Analyze supported prompt files when saved using local rules only." },
         "promptguard.minimumPromptLength": { "type": "number", "default": 20, "minimum": 0, "description": "Minimum number of characters to analyze." },
         "promptguard.disabledRules": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Rule IDs to disable in this workspace." },
         "promptguard.ignoreComments": { "type": "boolean", "default": false, "description": "Ignore comment-only lines during analysis." },

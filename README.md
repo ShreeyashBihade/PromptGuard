@@ -32,7 +32,7 @@ PromptGuard matches `match` against VS Code's selected-model vendor, ID, and fam
 
 PromptGuard uses local deterministic analysis by default. When a local `GROQ_API_KEY` is configured, it also sends every analyzed prompt to Groq for a strict semantic quality judgement and uses that judgement as the displayed overall score. This means prompts leave VS Code for Groq, so do not enable it for confidential prompts unless your organization permits that transfer. Without a key, PromptGuard remains fully local.
 
-To enable it, copy `.env.example` to `.env` and set a newly generated `GROQ_API_KEY`. The `.env` file is ignored by Git. Press **Improve prompt with Groq** in the dashboard to explicitly generate a revised prompt. The improvement asks targeted questions when vital context is absent, including purpose, audience, technical stack, operating system/environment, constraints, format, and success criteria. Each question includes an **Other** choice with free text. Generation receives every active PromptGuard finding, is validated locally afterward, and gets one focused correction pass if findings remain.
+To enable it, copy `.env.example` to `.env` and set a newly generated `GROQ_API_KEY`. The `.env` file is ignored by Git. Press **Improve prompt with Groq** in the dashboard to explicitly generate a revised prompt. Short prompts receive at most two targeted questions, each with an **Other** free-text option. Long prompts skip questions and use one compression pass to preserve the intended output while removing redundant tokens. Identical semantic judgements are cached for 30 minutes, and background saves use local rules only.
 
 ## Install and run locally
 
