@@ -31,9 +31,9 @@ export class RefinementService {
     const findings = this.analyzer.analyze(prompt).issues.map(issue => `${issue.title}: ${issue.suggestedFix}`);
     const context = Object.entries(answers).filter(([, value]) => Boolean(value)).map(([key, value]) => `- ${key}: ${value}`).join("\n");
     const groqMode = mode === "clarify" ? "clarify" : "compress";
-    const answer = await this.groq.improveWithContext(prompt, context, groqMode === "clarify" ? findings : [], groqMode);
+    const answer = await this.groq.improveWithContext(prompt, context, groqMode === "clarify" ? [] : findings, groqMode);
     if (groqMode === "compress" && (!this.preservesExplicitRequirements(prompt, answer.improvedPrompt) || !this.preservesDepth(prompt, answer.improvedPrompt) || answer.outputTokens > this.estimateTokens(prompt))) return { prompt: this.safeCompress(prompt), costUsd: answer.costUsd };
-    return { prompt: answer.improvedPrompt, costUsd: answer.costUsd };
+    return { prompt: groqMode === "clarify" ? this.compactGeneratedPrompt(answer.improvedPrompt) : answer.improvedPrompt, costUsd: answer.costUsd };
   }
   private parse(source: string): RefinementQuestion[] | undefined {
     const json = this.extractJson(source); if (!json) return undefined;
@@ -68,4 +68,7 @@ export class RefinementService {
     return candidateWords >= Math.ceil(originalWords * 0.92);
   }
   private estimateTokens(text: string): number { return Math.ceil(text.length / 4); }
+  private compactGeneratedPrompt(prompt: string): string {
+    return prompt.replace(/^\s*#{1,6}\s+/gm, "").replace(/\*\*/g, "").replace(/^\s*[-*]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/```[\s\S]*?```/g, match => match.replace(/```/g, "")).replace(/\n{3,}/g, "\n\n").trim();
+  }
 }
