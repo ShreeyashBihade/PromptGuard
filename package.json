@@ -27,7 +27,8 @@
         "promptguard.minimumPromptLength": { "type": "number", "default": 20, "minimum": 0, "description": "Minimum number of characters to analyze." },
         "promptguard.disabledRules": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Rule IDs to disable in this workspace." },
         "promptguard.ignoreComments": { "type": "boolean", "default": false, "description": "Ignore comment-only lines during analysis." },
-        "promptguard.modelPricing": { "type": "array", "default": [], "description": "Optional local pricing profiles in USD per million tokens. Match against model vendor, ID, or family.", "items": { "type": "object", "required": ["match", "inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "match": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } } }
+        "promptguard.modelPricing": { "type": "array", "default": [], "description": "Optional local pricing profiles in USD per million tokens. Match against model vendor, ID, or family.", "items": { "type": "object", "required": ["match", "inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "match": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } } },
+        "promptguard.apiBaseUrl": { "type": "string", "default": "http://127.0.0.1:3000", "description": "Deployed PromptGuard API URL. Enables consent-based cloud prompt logging." }
       }
     },
     "viewsContainers": { "activitybar": [{ "id": "promptguard", "title": "PromptGuard", "icon": "resources/promptguard.svg" }] },

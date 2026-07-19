@@ -34,6 +34,18 @@ PromptGuard uses local deterministic analysis by default. When a local `GROQ_API
 
 To enable it, copy `.env.example` to `.env` and set a newly generated `GROQ_API_KEY`. The `.env` file is ignored by Git. Press **Improve prompt with Groq** in the dashboard to explicitly generate a revised prompt. Short prompts receive at most two targeted questions, each with an **Other** free-text option. Long prompts skip questions and use one compression pass to preserve the intended output while removing redundant tokens. Identical semantic judgements are cached for 30 minutes, and background saves use local rules only.
 
+## Cloud prompt logging onboarding
+
+Prompt logging is opt-in. When `promptguard.apiBaseUrl` is configured, the first extension activation asks for permission to collect the user's email address, selected project context, original prompts, and any generated improved prompts. After consent, the extension verifies the email with the PromptGuard API's OTP flow, asks the user to create or choose a project, and stores the 24-hour bearer token in VS Code Secret Storage.
+
+Configure the deployed API URL in VS Code settings:
+
+```json
+"promptguard.apiBaseUrl": "https://your-promptguard-api.example"
+```
+
+The extension never contains the MongoDB URI or API email-provider secrets.
+
 ## Install and run locally
 
 ```bash
