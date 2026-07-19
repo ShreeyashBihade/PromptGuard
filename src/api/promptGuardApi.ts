@@ -1,12 +1,15 @@
 import * as vscode from "vscode";
+import { randomUUID } from "node:crypto";
 
 const SESSION_KEY = "promptguard.cloud.session";
 const PROJECT_KEY = "promptguard.cloud.project";
 const CONSENT_KEY = "promptguard.cloud.consent";
+const CONSENT_POLICY_KEY = "promptguard.cloud.consentPolicyVersion";
 
 interface Session { accessToken: string; expiresAt: string; userId: string; email: string; }
 interface Project { id: string; name: string; }
 interface VerificationResponse { accessToken: string; expiresAt: string; user: { id: string; email: string }; }
+class ApiRequestError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 
 /** Client for the separate PromptGuard API. No database credentials are present in the extension. */
 export class PromptGuardApi {
@@ -16,14 +19,14 @@ export class PromptGuardApi {
     if (!this.baseUrl) return false;
     if (!await this.hasConsent()) return false;
     if (!await this.ensureSession()) return false;
-    try { await this.project(); return true; } catch (error) { this.reportError(error); return false; }
+    try { await this.ensureConsentRecorded(); await this.project(); return true; } catch (error) { this.reportError(error); return false; }
   }
 
   async recordOriginalPrompt(originalPrompt: string): Promise<string | undefined> {
     if (!await this.beginOnboarding()) return undefined;
     try {
       const project = await this.project();
-      const created = await this.post<{ id: string }>("/v1/prompts", { projectId: project.id, originalPrompt, modifiedPrompt: null }, true);
+      const created = await this.requestWithRetry<{ id: string }>("/v1/prompts", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() }, body: JSON.stringify({ projectId: project.id, originalPrompt, modifiedPrompt: null }) }, true);
       return created.id;
     } catch (error) { this.reportError(error); return undefined; }
   }
@@ -52,7 +55,14 @@ export class PromptGuardApi {
     const verified = await this.verifyInPanel();
     if (!verified) return false;
     await this.context.secrets.store(SESSION_KEY, JSON.stringify({ accessToken: verified.accessToken, expiresAt: verified.expiresAt, userId: verified.user.id, email: verified.user.email } satisfies Session));
+    await this.context.globalState.update(CONSENT_POLICY_KEY, this.policyVersion);
     return true;
+  }
+  private get policyVersion(): string { return vscode.workspace.getConfiguration("promptguard").get<string>("dataCollectionPolicyVersion", "2026-07-19"); }
+  private async ensureConsentRecorded(): Promise<void> {
+    if (this.context.globalState.get<string>(CONSENT_POLICY_KEY) === this.policyVersion) return;
+    await this.post("/v1/account/consent", { policyVersion: this.policyVersion }, true);
+    await this.context.globalState.update(CONSENT_POLICY_KEY, this.policyVersion);
   }
   private async verifyInPanel(): Promise<VerificationResponse | undefined> {
     return new Promise(resolve => {
@@ -67,7 +77,7 @@ export class PromptGuardApi {
           catch (error) { panel.webview.html = this.emailHtml(error instanceof Error ? error.message : "Unable to send the code.", message.email); }
           return;
         }
-        try { finish(await this.post<VerificationResponse>("/v1/auth/verify-code", { email: message.email, code: message.code })); }
+        try { finish(await this.post<VerificationResponse>("/v1/auth/verify-code", { email: message.email, code: message.code, consent: { policyVersion: this.policyVersion } })); }
         catch (error) { panel.webview.html = this.otpHtml(message.email, error instanceof Error ? error.message : "The code could not be verified."); }
       });
       panel.webview.html = this.emailHtml();
@@ -114,8 +124,16 @@ export class PromptGuardApi {
   private async request<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {
     const session = authenticated ? await this.session() : undefined;
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers: { ...init.headers, ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}) } });
-    if (!response.ok) { if (response.status === 401) await this.context.secrets.delete(SESSION_KEY); const body = await response.json().catch(() => undefined) as { message?: string } | undefined; throw new Error(body?.message ?? `API request failed (${response.status})`); }
+    if (!response.ok) { if (response.status === 401) await this.context.secrets.delete(SESSION_KEY); const body = await response.json().catch(() => undefined) as { message?: string } | undefined; throw new ApiRequestError(response.status, body?.message ?? `API request failed (${response.status})`); }
     return response.status === 204 ? undefined as T : await response.json() as T;
+  }
+  private async requestWithRetry<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {
+    try { return await this.request<T>(path, init, authenticated); }
+    catch (error) {
+      // Reuse the same key only for a transient failure. The API returns the original record if the first request succeeded.
+      if (error instanceof ApiRequestError && error.status < 500) throw error;
+      return this.request<T>(path, init, authenticated);
+    }
   }
   private reportError(error: unknown): void { console.warn(`PromptGuard API: ${error instanceof Error ? error.message : "Unknown error"}`); }
 }
