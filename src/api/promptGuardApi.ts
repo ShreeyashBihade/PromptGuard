@@ -22,6 +22,9 @@ export class PromptGuardApi {
     try { await this.ensureConsentRecorded(); await this.project(); return true; } catch (error) { this.reportError(error); return false; }
   }
 
+  /** Mandatory preflight before a prompt can be forwarded to Groq. */
+  async authorizeGroqForwarding(): Promise<boolean> { return this.beginOnboarding(); }
+
   async recordOriginalPrompt(originalPrompt: string): Promise<string | undefined> {
     if (!await this.beginOnboarding()) return undefined;
     try {
@@ -106,7 +109,8 @@ export class PromptGuardApi {
   private async project(): Promise<Project> {
     const selected = this.context.workspaceState.get<Project>(PROJECT_KEY);
     if (selected) return selected;
-    const projects = await this.get<Array<Project & { createdAt: string }>>("/v1/projects", true);
+    const rawProjects = await this.get<Array<(Project & { createdAt: string }) | { _id?: string; projectId?: string; name: string }>>("/v1/projects", true);
+    const projects = rawProjects.map(project => ({ id: "id" in project ? project.id : project.projectId ?? project._id ?? "", name: project.name })).filter(project => project.id.length > 0);
     const picked = await vscode.window.showQuickPick([...projects.map(project => ({ label: project.name, project })), { label: "$(add) Create a project" }], { placeHolder: "Select a project context for your prompts" });
     if (!picked) throw new Error("Project selection was cancelled");
     const project = "project" in picked ? picked.project : await this.createProject();
@@ -116,7 +120,10 @@ export class PromptGuardApi {
   private async createProject(): Promise<Project> {
     const name = await vscode.window.showInputBox({ prompt: "Enter a project context for the prompts you send to PromptGuard", value: vscode.workspace.name ?? "Default project", validateInput: value => value.trim().length > 0 && value.trim().length <= 100 ? undefined : "Project name must be 1–100 characters." });
     if (!name) throw new Error("Project creation was cancelled");
-    return this.post<Project>("/v1/projects", { name: name.trim() }, true);
+    const created = await this.post<Project | { _id?: string; projectId?: string; name: string }>("/v1/projects", { name: name.trim() }, true);
+    const id = "id" in created ? created.id : created.projectId ?? created._id;
+    if (!id) throw new Error("The API created a project without returning a project ID.");
+    return { id, name: created.name };
   }
   private async session(): Promise<Session | undefined> { const raw = await this.context.secrets.get(SESSION_KEY); if (!raw) return undefined; try { return JSON.parse(raw) as Session; } catch { await this.context.secrets.delete(SESSION_KEY); return undefined; } }
   private async get<T>(path: string, authenticated = false): Promise<T> { return this.request<T>(path, { method: "GET" }, authenticated); }

@@ -10,7 +10,7 @@ import { PromptGuardCodeActions } from "./commands/registerCodeActions";
 import { PromptGuardParticipant } from "./chat/promptGuardParticipant";
 import { GroqGateway } from "./integrations/groq/groqGateway";
 import { PromptChatPanel } from "./ui/promptChatPanel";
-import { RefinementService } from "./improver/refinementService";
+import { RefinementAction, RefinementService } from "./improver/refinementService";
 import { RefinementPanel } from "./ui/refinementPanel";
 import { GroqModelProvider } from "./integrations/groq/groqModelProvider";
 import { GroqClient } from "./integrations/groq/groqClient";
@@ -25,25 +25,34 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastResult: AnalysisResult | undefined; let lastCloudPromptId: string | undefined;
 
   const enrichWithGroqJudgement = async (result: AnalysisResult): Promise<AnalysisResult> => {
+    if (!await api.authorizeGroqForwarding()) {
+      result.groqStatus = "Groq analysis requires verified email and a project context; score is local-only.";
+      return result;
+    }
     if (!await groq.isConfigured()) { result.groqStatus = "Groq not configured — score is local-only."; return result; }
     try {
       const cached = judgementCache.get(result.prompt);
       const judgement = cached && cached.expiresAt > Date.now() ? cached : await groq.judge(result.prompt, result.issues.map(issue => `${issue.title}: ${issue.description}`));
       if (!cached || cached.expiresAt <= Date.now()) judgementCache.set(result.prompt, { ...judgement, expiresAt: Date.now() + 30 * 60 * 1000 });
-      result.score.total = judgement.score; result.score.grade = judgement.score >= 85 ? "Excellent" : judgement.score >= 70 ? "Strong" : judgement.score >= 50 ? "Needs work" : "At risk";
-      result.scoreSource = "groq"; result.groqStatus = cached && cached.expiresAt > Date.now() ? "Groq semantic judgement applied (cached)." : "Groq semantic judgement applied.";
+      const total = judgement.score;
+      result.score.total = total; result.score.grade = total >= 85 ? "Excellent" : total >= 70 ? "Strong" : total >= 50 ? "Needs work" : "At risk";
+      result.scoreSource = "groq"; result.groqStatus = cached && cached.expiresAt > Date.now() ? "Groq semantic judgement applied (cached)." : "Groq semantic judgement applied; local rules remain advisory and safety-focused.";
       result.issues.unshift({ id: "groq-semantic-judgement", ruleId: "groq-semantic-judgement", title: "Groq semantic assessment", description: judgement.rationale, severity: judgement.score < 50 ? "warning" : "info", confidence: 0.9, category: "specificity", suggestedFix: "Address the missing context identified by the semantic assessment.", estimatedTokenSavings: 0, estimatedCostSavings: judgement.costUsd });
     } catch (error) { result.groqStatus = `Groq judgement unavailable — local-only score (${error instanceof Error ? error.message : "unknown error"}).`; }
     return result;
   };
   const saveHistory = async (result: AnalysisResult, prompt: string): Promise<void> => { await history.add({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, timestamp: result.analyzedAt, originalPrompt: prompt, optimizedPrompt: result.optimization.optimizedPrompt, score: result.score.total, improvement: Math.max(0, 100 - result.score.total), estimatedSavings: result.cost.potentialSavingsUsd ?? 0 }); navigator.refresh(); };
   const recordOriginal = async (prompt: string): Promise<void> => { lastCloudPromptId = await api.recordOriginalPrompt(prompt); };
-  const improve = async (): Promise<void> => {
-    if (!lastResult) { vscode.window.showInformationMessage("Analyze a prompt before requesting an improvement."); return; }
-    const panel = new RefinementPanel(prompt => refinements.plan(prompt), async (prompt, answers, strategy) => { const improved = (await refinements.refine(prompt, answers, strategy)).prompt; await api.recordModifiedPrompt(lastCloudPromptId, improved); return improved; });
-    await panel.show(lastResult.prompt);
+  const runRefinement = async (action: RefinementAction): Promise<void> => {
+    if (!lastResult) { vscode.window.showInformationMessage("Analyze a prompt before choosing a refinement action."); return; }
+    if (action !== "cleanup" && !await api.authorizeGroqForwarding()) {
+      vscode.window.showInformationMessage("Verify your email and select a project context before using Groq.");
+      return;
+    }
+    const panel = new RefinementPanel((prompt, selectedAction) => refinements.plan(prompt, selectedAction), async (prompt, answers, selectedAction) => { const result = await refinements.run(prompt, answers, selectedAction); await api.recordModifiedPrompt(lastCloudPromptId, result.prompt); return result; });
+    await panel.show(lastResult.prompt, action);
   };
-  const dashboard = new Dashboard(context.extensionUri, () => { void improve(); });
+  const dashboard = new Dashboard(context.extensionUri, action => { void runRefinement(action); });
   const localChat = new PromptChatPanel(async prompt => {
     const settings = getSettings(); if (prompt.trim().length < settings.minimumPromptLength) { vscode.window.showInformationMessage("PromptGuard: Enter a longer prompt to analyze."); return undefined; }
     lastResult = await enrichWithGroqJudgement(analyzer.analyze(prompt, settings.disabledRules)); await recordOriginal(prompt); await saveHistory(lastResult, prompt); dashboard.show(lastResult, history.list()); return lastResult;
@@ -61,9 +70,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const participant = vscode.chat.createChatParticipant("promptguard.analyzer", (request, chatContext, stream, token) => chat.handle(request, chatContext, stream, token));
   participant.iconPath = vscode.Uri.joinPath(context.extensionUri, "resources", "promptguard.svg");
   const groqProvider = vscode.lm.registerLanguageModelChatProvider("promptguard-groq", new GroqModelProvider(groqClient));
-  context.subscriptions.push(decorations, participant, groqProvider, vscode.window.registerTreeDataProvider("promptguard.navigator", navigator), vscode.languages.registerCodeActionsProvider({ scheme: "file" }, new PromptGuardCodeActions(), { providedCodeActionKinds: PromptGuardCodeActions.providedCodeActionKinds }), vscode.commands.registerCommand("promptguard.analyze", analyze), vscode.commands.registerCommand("promptguard.optimize", optimize), vscode.commands.registerCommand("promptguard.improve", improve), vscode.commands.registerCommand("promptguard.openChat", () => localChat.show()), vscode.commands.registerCommand("promptguard.configureGroq", () => vscode.window.showInformationMessage("Create .env from .env.example and add a newly generated GROQ_API_KEY, then reload VS Code.")), vscode.commands.registerCommand("promptguard.openDashboard", () => dashboard.show(lastResult, history.list())), vscode.commands.registerCommand("promptguard.showHistory", async () => { const entry = await vscode.window.showQuickPick(history.list().map(item => ({ label: `${item.score}/100 · ${new Date(item.timestamp).toLocaleDateString()}`, description: item.originalPrompt.slice(0, 90), item })), { placeHolder: "Search your local PromptGuard history" }); if (entry) { const doc = await vscode.workspace.openTextDocument({ content: entry.item.originalPrompt, language: "markdown" }); await vscode.window.showTextDocument(doc); } }), vscode.commands.registerCommand("promptguard.openSettings", () => vscode.commands.executeCommand("workbench.action.openSettings", "@ext:promptguard")), vscode.workspace.onDidSaveTextDocument(document => { if (getSettings().analyzeOnSave && vscode.window.activeTextEditor?.document === document) void analyze(false); }));
+  context.subscriptions.push(decorations, participant, groqProvider, vscode.window.registerTreeDataProvider("promptguard.navigator", navigator), vscode.languages.registerCodeActionsProvider({ scheme: "file" }, new PromptGuardCodeActions(), { providedCodeActionKinds: PromptGuardCodeActions.providedCodeActionKinds }), vscode.commands.registerCommand("promptguard.analyze", analyze), vscode.commands.registerCommand("promptguard.optimize", optimize), vscode.commands.registerCommand("promptguard.improve", () => runRefinement("expand")), vscode.commands.registerCommand("promptguard.openChat", () => localChat.show()), vscode.commands.registerCommand("promptguard.configureGroq", () => vscode.window.showInformationMessage("Create .env from .env.example and add a newly generated GROQ_API_KEY, then reload VS Code.")), vscode.commands.registerCommand("promptguard.openDashboard", () => dashboard.show(lastResult, history.list())), vscode.commands.registerCommand("promptguard.showHistory", async () => { const entry = await vscode.window.showQuickPick(history.list().map(item => ({ label: `${item.score}/100 · ${new Date(item.timestamp).toLocaleDateString()}`, description: item.originalPrompt.slice(0, 90), item })), { placeHolder: "Search your local PromptGuard history" }); if (entry) { const doc = await vscode.workspace.openTextDocument({ content: entry.item.originalPrompt, language: "markdown" }); await vscode.window.showTextDocument(doc); } }), vscode.commands.registerCommand("promptguard.openSettings", () => vscode.commands.executeCommand("workbench.action.openSettings", "@ext:promptguard")), vscode.workspace.onDidSaveTextDocument(document => { if (getSettings().analyzeOnSave && vscode.window.activeTextEditor?.document === document) void analyze(false); }));
 
-  // Runs only when a deployed API URL has been configured. Consent is always requested first.
-  void api.beginOnboarding();
 }
 export function deactivate(): void {}
