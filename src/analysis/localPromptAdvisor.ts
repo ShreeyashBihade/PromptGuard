@@ -1,4 +1,5 @@
 import { LocalInsights, ModelRecommendation } from "../types";
+import type { LearningSummary } from "../services/learning/promptLearningService";
 
 interface ModelProfile {
   provider: ModelRecommendation["provider"];
@@ -26,12 +27,12 @@ const MODEL_CATALOG: readonly ModelProfile[] = [
 ];
 
 export class LocalPromptAdvisor {
-  build(prompt: string, mode: LocalInsights["mode"]): LocalInsights {
+  build(prompt: string, mode: LocalInsights["mode"], learning?: LearningSummary): LocalInsights {
     const task = this.detectTask(prompt);
     return {
       mode,
-      bestPractices: this.bestPractices(prompt, task),
-      recommendations: this.recommend(task)
+      bestPractices: this.bestPractices(prompt, task, learning),
+      recommendations: this.recommend(task, learning)
     };
   }
 
@@ -44,12 +45,28 @@ export class LocalPromptAdvisor {
     return "analysis";
   }
 
-  private bestPractices(prompt: string, task: ReturnType<LocalPromptAdvisor["detectTask"]>): string[] {
+  private bestPractices(prompt: string, task: ReturnType<LocalPromptAdvisor["detectTask"]>, learning?: LearningSummary): string[] {
     const practices = [
       "State the output format explicitly (table, JSON, bullet list, or checklist).",
       "Add acceptance criteria so the model can self-check before finalizing.",
       "Include constraints (token budget, style, must-include and must-avoid items)."
     ];
+
+    if (learning?.loaded) {
+      if (learning.acceptedOptimizationCount > learning.rejectedOptimizationCount) {
+        practices.unshift("You usually accept concise rewrites, so keep the core task short and add guardrails only where they help.");
+      } else if (learning.rejectedOptimizationCount > learning.acceptedOptimizationCount) {
+        practices.unshift("You often reject aggressive compression, so preserve examples and constraints when suggesting edits.");
+      }
+
+      const topCategories = Object.entries(learning.issueCategories).sort((left, right) => right[1] - left[1]).slice(0, 2).map(([category]) => category);
+      if (topCategories.includes("constraints")) {
+        practices.push("Lead with explicit constraints because your accepted optimizations often depend on tighter boundaries.");
+      }
+      if (topCategories.includes("formatting")) {
+        practices.push("Keep output format instructions explicit and stable across revisions.");
+      }
+    }
 
     if (prompt.length < 120) practices.unshift("Provide more context about audience, objective, and edge cases.");
     if (!/example|sample|input|output/i.test(prompt)) practices.push("Include one good example input/output pair for stronger consistency.");
@@ -62,7 +79,7 @@ export class LocalPromptAdvisor {
     return practices.slice(0, 6);
   }
 
-  private recommend(task: ReturnType<LocalPromptAdvisor["detectTask"]>): ModelRecommendation[] {
+  private recommend(task: ReturnType<LocalPromptAdvisor["detectTask"]>, learning?: LearningSummary): ModelRecommendation[] {
     const ranked = MODEL_CATALOG.map(profile => {
       const score = profile.strengths.includes(task === "long-context" ? "long context" : task)
         ? 3
@@ -89,6 +106,15 @@ export class LocalPromptAdvisor {
       });
       seen.add(item.profile.provider);
       if (picks.length === 3) break;
+    }
+
+    if (learning?.loaded && learning.acceptedOptimizationCount > 0 && picks[0]) {
+      const tokenSavings = learning.averageTokenSavings ?? 0;
+      const timeSavedMs = learning.averageTimeSavedMs ?? 0;
+      picks[0] = {
+        ...picks[0],
+        rationale: `${picks[0].rationale} Your accepted optimizations average ${tokenSavings.toFixed(1)} saved tokens and ${Math.round(timeSavedMs)}ms saved time.`
+      };
     }
 
     if (picks.length < 3) {

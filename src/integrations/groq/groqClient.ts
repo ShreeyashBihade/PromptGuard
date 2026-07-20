@@ -1,14 +1,21 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { GroqKeyMode } from "../../config/settings";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 export interface GroqUsage { promptTokens: number; completionTokens: number; }
 export interface GroqCompletion { content: string; usage: GroqUsage; }
 export interface GroqMessage { role: "system" | "user" | "assistant"; content: string; }
+export interface GroqKeyStatus { configured: boolean; source: "project-env" | "workspace-env" | "process-env" | "none"; mode: GroqKeyMode; }
 export class GroqClient {
-  constructor(private readonly extensionRoot?: string) {}
+  constructor(private readonly workspaceState?: vscode.Memento) {}
   async isConfigured(): Promise<boolean> { return Boolean(await this.readApiKey()); }
+  async keyStatus(): Promise<GroqKeyStatus> {
+    const mode = this.mode();
+    const resolved = await this.resolveApiKey();
+    return { configured: Boolean(resolved?.key), source: resolved?.source ?? "none", mode };
+  }
   async complete(system: string, prompt: string, maxTokens: number): Promise<GroqCompletion> { return this.completeMessages([{ role: "system", content: system }, { role: "user", content: prompt }], maxTokens); }
   async completeMessages(messages: readonly GroqMessage[], maxTokens: number): Promise<GroqCompletion> {
     const key = await this.readApiKey();
@@ -28,9 +35,34 @@ export class GroqClient {
     if (!content?.trim()) return undefined;
     return { content, usage: { promptTokens: data.usage?.prompt_tokens ?? 0, completionTokens: data.usage?.completion_tokens ?? 0 } };
   }
+  private mode(): GroqKeyMode {
+    return vscode.workspace.getConfiguration("promptguard").get<GroqKeyMode>("groqKeyMode", "strictProjectOnly");
+  }
+  private async resolveApiKey(): Promise<{ key: string; source: GroqKeyStatus["source"] } | undefined> {
+    const mode = this.mode();
+    const projectFolder = this.workspaceState?.get<string>("promptguard.cloud.projectFolder");
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const roots = [projectFolder, mode === "workspaceThenProcessEnv" ? workspaceFolder : undefined].filter((value, index, self): value is string => Boolean(value) && self.indexOf(value) === index);
+    for (const root of roots) {
+      try {
+        const source = await fs.readFile(path.join(root, ".env"), "utf8");
+        const key = /^GROQ_API_KEY\s*=\s*(.+)$/m.exec(source)?.[1]?.trim().replace(/^['"]|['"]$/g, "");
+        if (!key) continue;
+        const sourceLabel: GroqKeyStatus["source"] = projectFolder && root === projectFolder ? "project-env" : "workspace-env";
+        return { key, source: sourceLabel };
+      } catch {
+        // Try next location.
+      }
+    }
+
+    if (mode === "workspaceThenProcessEnv") {
+      const envKey = process.env.GROQ_API_KEY?.trim();
+      if (envKey) return { key: envKey, source: "process-env" };
+    }
+
+    return undefined;
+  }
   private async readApiKey(): Promise<string | undefined> {
-    const roots = [vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, this.extensionRoot].filter((value): value is string => Boolean(value));
-    for (const root of roots) { try { const source = await fs.readFile(path.join(root, ".env"), "utf8"); const key = /^GROQ_API_KEY\s*=\s*(.+)$/m.exec(source)?.[1]?.trim().replace(/^['"]|['"]$/g, ""); if (key) return key; } catch { /* Try the next local location. */ } }
-    return process.env.GROQ_API_KEY;
+    return (await this.resolveApiKey())?.key;
   }
 }

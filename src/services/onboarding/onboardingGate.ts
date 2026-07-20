@@ -49,6 +49,10 @@ export class OnboardingGate {
     await this.api.recordModifiedPrompt(promptId, modifiedPrompt);
   }
 
+  async chooseProject(forceCreate = false): Promise<void> {
+    await this.api.chooseProject(forceCreate);
+  }
+
   currentState(): OnboardingState {
     return this.state.current();
   }

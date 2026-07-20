@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
+import * as path from "node:path";
 
 const SESSION_KEY = "promptguard.cloud.session";
 const PROJECT_KEY = "promptguard.cloud.project";
+const PROJECT_FOLDER_KEY = "promptguard.cloud.projectFolder";
 const CONSENT_KEY = "promptguard.cloud.consent";
 const CONSENT_POLICY_KEY = "promptguard.cloud.consentPolicyVersion";
 
@@ -34,6 +36,7 @@ export class PromptGuardApi {
   async logout(): Promise<void> {
     await this.context.secrets.delete(SESSION_KEY);
     await this.context.workspaceState.update(PROJECT_KEY, undefined);
+    await this.context.workspaceState.update(PROJECT_FOLDER_KEY, undefined);
   }
 
   async deleteAccount(): Promise<void> {
@@ -48,6 +51,7 @@ export class PromptGuardApi {
   async resetOnboardingState(): Promise<void> {
     await this.context.secrets.delete(SESSION_KEY);
     await this.context.workspaceState.update(PROJECT_KEY, undefined);
+    await this.context.workspaceState.update(PROJECT_FOLDER_KEY, undefined);
     await this.context.globalState.update(CONSENT_KEY, undefined);
     await this.context.globalState.update(CONSENT_POLICY_KEY, undefined);
   }
@@ -57,16 +61,8 @@ export class PromptGuardApi {
   }
 
   async beginOnboardingDetailed(options: { forceConsentPrompt?: boolean } = {}): Promise<OnboardingResult> {
-    if (!this.baseUrl) return { allowed: false, stage: "api-unconfigured", message: "PromptGuard API URL is not configured." };
-    if (!await this.hasConsent(options.forceConsentPrompt ?? false)) return { allowed: false, stage: "consent-denied", message: "Data-collection consent was not granted." };
-    if (!await this.ensureSession()) return { allowed: false, stage: "session-cancelled", message: "Email verification was cancelled or did not complete." };
-    try {
-      await this.ensureConsentRecorded();
-    } catch (error) {
-      const details = this.errorDetails(error);
-      this.reportError(error);
-      return { allowed: false, stage: "api-error", message: `Unable to record consent policy (${details.message}).`, httpStatus: details.httpStatus };
-    }
+    const preflight = await this.prepareCloudContext(options.forceConsentPrompt ?? false);
+    if (!preflight.allowed) return preflight;
 
     try {
       await this.project();
@@ -88,6 +84,15 @@ export class PromptGuardApi {
   /** Manual onboarding kickoff used when a user wants to retry login/consent explicitly. */
   async startOnboardingDetailed(): Promise<OnboardingResult> { return this.beginOnboardingDetailed({ forceConsentPrompt: true }); }
 
+  async chooseProject(forceCreate = false): Promise<void> {
+    const ready = await this.prepareCloudContext(true);
+    if (!ready.allowed) throw new Error(ready.message);
+    const project = forceCreate
+      ? await this.createProject(undefined)
+      : await this.chooseProjectOrCreate(this.defaultProjectName());
+    await this.context.workspaceState.update(PROJECT_KEY, project);
+  }
+
   async recordOriginalPrompt(originalPrompt: string): Promise<string | undefined> {
     const onboarding = await this.beginOnboardingDetailed();
     if (!onboarding.allowed) return undefined;
@@ -102,6 +107,20 @@ export class PromptGuardApi {
     if (!promptId || !this.baseUrl) return;
     try { await this.request(`/v1/prompts/${encodeURIComponent(promptId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modifiedPrompt }) }, true); }
     catch (error) { this.reportError(error); }
+  }
+
+  private async prepareCloudContext(forceConsentPrompt = false): Promise<OnboardingResult> {
+    if (!this.baseUrl) return { allowed: false, stage: "api-unconfigured", message: "PromptGuard API URL is not configured." };
+    if (!await this.hasConsent(forceConsentPrompt)) return { allowed: false, stage: "consent-denied", message: "Data-collection consent was not granted." };
+    if (!await this.ensureSession()) return { allowed: false, stage: "session-cancelled", message: "Email verification was cancelled or did not complete." };
+    try {
+      await this.ensureConsentRecorded();
+    } catch (error) {
+      const details = this.errorDetails(error);
+      this.reportError(error);
+      return { allowed: false, stage: "api-error", message: `Unable to record consent policy (${details.message}).`, httpStatus: details.httpStatus };
+    }
+    return { allowed: true, stage: "policy-recorded", message: "Cloud session ready." };
   }
 
   private get baseUrl(): string { return vscode.workspace.getConfiguration("promptguard").get<string>("apiBaseUrl", "").trim().replace(/\/$/, ""); }
@@ -151,9 +170,18 @@ export class PromptGuardApi {
           try {
             verifiedSession = await this.post<VerificationResponse>("/v1/auth/verify-code", { email: message.email, code: message.code, consent: { policyVersion: this.policyVersion } });
             await this.context.secrets.store(SESSION_KEY, JSON.stringify({ accessToken: verifiedSession.accessToken, expiresAt: verifiedSession.expiresAt, userId: verifiedSession.user.id, email: verifiedSession.user.email } satisfies Session));
-            panel.webview.html = this.projectHtml(message.email, defaultProjectName);
+            panel.webview.html = this.loadingHtml("Loading your projects...");
+            const project = await this.chooseProjectOrCreate(defaultProjectName);
+            await this.context.workspaceState.update(PROJECT_KEY, project);
+            finish(verifiedSession);
           }
-          catch (error) { panel.webview.html = this.otpHtml(message.email, error instanceof Error ? error.message : "The code could not be verified."); }
+          catch (error) {
+            if (error instanceof Error && error.message === "Project selection was cancelled") {
+              finish(undefined);
+              return;
+            }
+            panel.webview.html = this.otpHtml(message.email, error instanceof Error ? error.message : "The code could not be verified.");
+          }
           return;
         }
         if (message.type === "submitProject") {
@@ -210,17 +238,80 @@ export class PromptGuardApi {
   private async project(): Promise<Project> {
     const selected = this.context.workspaceState.get<Project>(PROJECT_KEY);
     if (selected) return selected;
-    const project = await this.createProject();
+    const project = await this.chooseProjectOrCreate(this.defaultProjectName());
     await this.context.workspaceState.update(PROJECT_KEY, project);
     return project;
   }
+  private async chooseProjectOrCreate(defaultName: string): Promise<Project> {
+    const existing = await this.listProjects();
+    if (!existing.length) return this.createProject(defaultName);
+
+    const createValue = "__create_new_project__";
+    const picked = await vscode.window.showQuickPick([
+      ...existing.map(project => ({ label: project.name, description: "Existing project", value: project.id })),
+      { label: "+ Create new project", description: "Use a new project name", value: createValue }
+    ], { placeHolder: "Choose one of your PromptGuard projects or create a new one" });
+
+    if (!picked) throw new Error("Project selection was cancelled");
+    if (picked.value === createValue) return this.createProject(defaultName);
+    return existing.find(project => project.id === picked.value) ?? this.createProject(defaultName);
+  }
+
+  private async listProjects(): Promise<Project[]> {
+    try {
+      const response = await this.get<unknown>("/v1/projects", true);
+      const source = Array.isArray(response)
+        ? response
+        : typeof response === "object" && response !== null && Array.isArray((response as { projects?: unknown }).projects)
+          ? (response as { projects: unknown[] }).projects
+          : [];
+
+      return source
+        .map(value => this.normalizeProject(value))
+        .filter((value): value is Project => Boolean(value));
+    } catch {
+      return [];
+    }
+  }
+
+  private normalizeProject(value: unknown): Project | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const project = value as { id?: unknown; projectId?: unknown; _id?: unknown; name?: unknown };
+    const id = typeof project.id === "string"
+      ? project.id
+      : typeof project.projectId === "string"
+        ? project.projectId
+        : typeof project._id === "string"
+          ? project._id
+          : undefined;
+    const name = typeof project.name === "string" ? project.name.trim() : "";
+    if (!id || !name) return undefined;
+    return { id, name };
+  }
+
   private async createProject(name?: string): Promise<Project> {
-    const projectName = name?.trim() || await vscode.window.showInputBox({ prompt: "Enter the project name PromptGuard should use for this workspace", value: this.defaultProjectName(), validateInput: value => value.trim().length > 0 && value.trim().length <= 100 ? undefined : "Project name must be 1–100 characters." });
+    const selectedFolder = await this.pickProjectFolder();
+    const suggestedName = name?.trim() || path.basename(selectedFolder.fsPath) || this.defaultProjectName();
+    const projectName = await vscode.window.showInputBox({ prompt: "Name this PromptGuard project", value: suggestedName, validateInput: value => value.trim().length > 0 && value.trim().length <= 100 ? undefined : "Project name must be 1–100 characters." });
     if (!projectName) throw new Error("Project creation was cancelled");
     const created = await this.post<Project | { _id?: string; projectId?: string; name: string }>("/v1/projects", { name: projectName }, true);
     const id = "id" in created ? created.id : created.projectId ?? created._id;
     if (!id) throw new Error("The API created a project without returning a project ID.");
+    await this.context.workspaceState.update(PROJECT_FOLDER_KEY, selectedFolder.fsPath);
     return { id, name: created.name };
+  }
+  private async pickProjectFolder(): Promise<vscode.Uri> {
+    const initialUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const selected = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Use this folder for project",
+      title: "Select project folder",
+      defaultUri: initialUri
+    });
+    if (!selected || selected.length === 0 || !selected[0]) throw new Error("Project folder selection was cancelled");
+    return selected[0];
   }
   private async session(): Promise<Session | undefined> { const raw = await this.context.secrets.get(SESSION_KEY); if (!raw) return undefined; try { return JSON.parse(raw) as Session; } catch { await this.context.secrets.delete(SESSION_KEY); return undefined; } }
   private async get<T>(path: string, authenticated = false): Promise<T> { return this.request<T>(path, { method: "GET" }, authenticated); }
@@ -242,6 +333,9 @@ export class PromptGuardApi {
   private errorDetails(error: unknown): { message: string; httpStatus?: number } {
     if (error instanceof ApiRequestError) return { message: error.message, httpStatus: error.status };
     return { message: error instanceof Error ? error.message : "unknown error" };
+  }
+  private loadingHtml(text: string): string {
+    return `<!doctype html><body style="font-family:var(--vscode-font-family);padding:24px"><h2>PromptGuard</h2><p>${text}</p></body>`;
   }
   private reportError(error: unknown): void { console.warn(`PromptGuard API: ${error instanceof Error ? error.message : "Unknown error"}`); }
 }

@@ -29,11 +29,34 @@ export class GroqGateway {
   }
   async ask(instruction: string, prompt: string, maxTokens: number): Promise<{ content: string; costUsd: number }> { const answer = await this.client.complete(instruction, prompt, maxTokens); return { content: answer.content, costUsd: this.cost(answer.usage.promptTokens, answer.usage.completionTokens) }; }
   async improveWithContext(prompt: string, context: string, findings: readonly string[], mode: "clarify" | "compress"): Promise<{ improvedPrompt: string; costUsd: number; outputTokens: number }> {
-    const completionBudget = mode === "clarify" ? 700 : Math.min(4_000, Math.max(800, Math.ceil(prompt.length / 3)));
+    const completionBudget = mode === "clarify"
+      ? Math.min(2_400, Math.max(900, Math.ceil((prompt.length + context.length) / 2.5)))
+      : Math.min(4_000, Math.max(800, Math.ceil(prompt.length / 3)));
     if (mode === "compress") return this.optimizeForTokenReduction(prompt, context, findings, completionBudget);
     const payload = `<original_prompt>\n${prompt}\n</original_prompt>\n\n<clarifications>\n${context || "None"}\n</clarifications>`;
-    const answer = await this.client.complete(GROQ_CLARIFY_SYSTEM_PROMPT, payload, completionBudget);
-    return { improvedPrompt: answer.content, costUsd: this.cost(answer.usage.promptTokens, answer.usage.completionTokens), outputTokens: answer.usage.completionTokens };
+    const first = await this.client.complete(GROQ_CLARIFY_SYSTEM_PROMPT, payload, completionBudget);
+
+    if (!this.likelyTruncated(first.content, first.usage.completionTokens, completionBudget)) {
+      return { improvedPrompt: first.content, costUsd: this.cost(first.usage.promptTokens, first.usage.completionTokens), outputTokens: first.usage.completionTokens };
+    }
+
+    try {
+      const continuation = await this.client.completeMessages([
+        { role: "system", content: GROQ_CLARIFY_SYSTEM_PROMPT },
+        { role: "user", content: payload },
+        { role: "assistant", content: first.content },
+        { role: "user", content: "Continue exactly from where you stopped. Return only the continuation text with no preface and no markdown." }
+      ], Math.max(500, Math.floor(completionBudget * 0.75)));
+
+      const merged = `${first.content.trim()} ${continuation.content.trim()}`.trim();
+      return {
+        improvedPrompt: merged,
+        costUsd: this.cost(first.usage.promptTokens + continuation.usage.promptTokens, first.usage.completionTokens + continuation.usage.completionTokens),
+        outputTokens: first.usage.completionTokens + continuation.usage.completionTokens
+      };
+    } catch {
+      return { improvedPrompt: first.content, costUsd: this.cost(first.usage.promptTokens, first.usage.completionTokens), outputTokens: first.usage.completionTokens };
+    }
   }
   private async optimizeForTokenReduction(prompt: string, context: string, findings: readonly string[], completionBudget: number): Promise<{ improvedPrompt: string; costUsd: number; outputTokens: number }> {
     const payload = `<original_prompt>\n${prompt}\n</original_prompt>\n\n<clarifications>\n${context || "None"}\n</clarifications>\n\n<findings_to_address>\n${findings.join("\n") || "None"}\n</findings_to_address>`;
@@ -56,6 +79,11 @@ export class GroqGateway {
   }
   private forecast(prompt: string, instruction: string, maxOutput: number): number { return this.cost(Math.ceil((prompt.length + instruction.length) / 4), maxOutput); }
   private cost(input: number, output: number): number { return input * INPUT_PER_MILLION / 1_000_000 + output * OUTPUT_PER_MILLION / 1_000_000; }
+  private likelyTruncated(content: string, outputTokens: number, budget: number): boolean {
+    if (!content.trim()) return true;
+    if (outputTokens < Math.max(200, budget - 35)) return false;
+    return !/[.!?"')\]]\s*$/.test(content.trim());
+  }
   private parseJudgement(source: string): { score: number; rationale: string } | undefined { const start = source.indexOf("{"); const end = source.lastIndexOf("}"); if (start < 0 || end <= start) return undefined; try { const value = JSON.parse(source.slice(start, end + 1)) as { score?: unknown; rationale?: unknown }; if (typeof value.score !== "number") return undefined; return { score: Math.max(0, Math.min(100, Math.round(value.score))), rationale: typeof value.rationale === "string" ? value.rationale : "Groq semantic judgement applied." }; } catch { return undefined; } }
   private parseTokenOptimizer(source: string): string | undefined {
     const start = source.indexOf("{"); const end = source.lastIndexOf("}"); if (start < 0 || end <= start) return undefined;

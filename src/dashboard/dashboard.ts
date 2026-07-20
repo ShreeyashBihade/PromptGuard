@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { PromptAnalyticsService } from "../services/analytics/promptAnalyticsService";
 import { AnalysisResult, PromptHistoryEntry, PromptOptimizationLedger } from "../types";
 
 const nonce = (): string => Math.random().toString(36).slice(2);
@@ -13,8 +14,9 @@ const escapeHtml = (value: string): string =>
 
 export class Dashboard {
   private panel?: vscode.WebviewPanel;
+  private readonly analytics = new PromptAnalyticsService();
 
-  constructor(private readonly extensionUri: vscode.Uri, private readonly onAction: (action: "cleanup" | "expand" | "minimize" | "logout" | "delete") => void) {}
+  constructor(private readonly extensionUri: vscode.Uri, private readonly onAction: (action: "cleanup" | "expand" | "minimize" | "logout" | "delete" | "new-project" | "switch-project") => void) {}
 
   show(result: AnalysisResult | undefined, history: PromptHistoryEntry[], ledger?: PromptOptimizationLedger): void {
     if (!this.panel) {
@@ -22,7 +24,7 @@ export class Dashboard {
       this.panel.onDidDispose(() => { this.panel = undefined; });
       this.panel.webview.onDidReceiveMessage((message: unknown) => {
         const type = typeof message === "object" && message !== null ? (message as { type?: unknown }).type : undefined;
-        if (type === "cleanup" || type === "expand" || type === "minimize" || type === "logout" || type === "delete") this.onAction(type);
+        if (type === "cleanup" || type === "expand" || type === "minimize" || type === "logout" || type === "delete" || type === "new-project" || type === "switch-project") this.onAction(type);
       });
     }
     this.panel.webview.html = this.html(this.panel.webview, result, history, ledger);
@@ -41,6 +43,7 @@ export class Dashboard {
     const modelRecommendations = result?.localInsights?.recommendations ?? [];
     const totals = ledger?.totals;
     const entries = ledger?.entries ?? [];
+    const analytics = this.analytics.build(history, result);
     const latest = entries.slice(0, 8).map(entry => `
       <tr>
         <td>${escapeHtml(new Date(entry.timestamp).toLocaleDateString())}</td>
@@ -54,6 +57,12 @@ export class Dashboard {
     const nextMilestone = Math.ceil(((totals?.totalReducedTokens ?? 0) + 1) / 1000) * 1000;
     const milestoneProgress = nextMilestone > 0 ? Math.min(100, ((totals?.totalReducedTokens ?? 0) / nextMilestone) * 100) : 0;
     const trendEntries = [...entries].slice(0, 10).reverse();
+    const analyticsTrendLabels = analytics.recentSamples.map(sample => escapeHtml(new Date(sample.timestamp).toLocaleDateString()));
+    const analyticsTrendQuality = analytics.recentSamples.map(sample => sample.quality);
+    const analyticsTrendCost = analytics.recentSamples.map(sample => sample.estimatedCostUsd);
+    const analyticsTrendSavings = analytics.recentSamples.map(sample => sample.optimizationSavingsUsd);
+    const analyticsAverageLabels = ["Tokens", "Ambiguity", "Redundancy", "Quality", "Savings", "Cost"];
+    const analyticsAverageValues = [analytics.averageTokens, analytics.averageAmbiguity, analytics.averageRedundancy, analytics.averageQuality, analytics.averageOptimizationSavingsUsd, analytics.averageCostUsd];
     const issueHtml = issues.length
       ? issues.slice(0, 6).map((issue, index) => `
         <article class="issue" style="--delay:${index + 2};">
@@ -200,6 +209,13 @@ export class Dashboard {
               gap: 12px;
             }
 
+            .analytics-grid {
+              margin-top: 16px;
+              display: grid;
+              grid-template-columns: repeat(6, minmax(120px, 1fr));
+              gap: 12px;
+            }
+
             .stat,
             .panel {
               border-radius: 14px;
@@ -314,6 +330,19 @@ export class Dashboard {
               font-size: 16px;
             }
 
+            .chart-frame {
+              height: 260px;
+            }
+
+            .chart-frame canvas {
+              width: 100% !important;
+              height: 100% !important;
+            }
+
+            .analytics-table {
+              margin-top: 14px;
+            }
+
             .issue {
               --delay: 1;
               padding: 10px 0;
@@ -368,11 +397,16 @@ export class Dashboard {
               .two {
                 grid-template-columns: 1fr;
               }
+
+              .analytics-grid {
+                grid-template-columns: repeat(3, minmax(120px, 1fr));
+              }
             }
 
             @media (max-width: 640px) {
               body { padding: 16px; }
               .grid { grid-template-columns: 1fr; }
+              .analytics-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
             }
           </style>
         </head>
@@ -384,6 +418,8 @@ export class Dashboard {
                 <h1>Prompt intelligence with clear guardrails and measurable outcomes.</h1>
                 <p class="status muted">${status}</p>
                 <div class="actions">
+                  <button id="switch-project" class="secondary">Switch project</button>
+                  <button id="new-project" class="secondary">New project</button>
                   <button id="cleanup" class="secondary">Offline safe cleanup</button>
                   <button id="expand">Expand prompt</button>
                   <button id="minimize" class="secondary">Minimize token usage</button>
@@ -395,6 +431,55 @@ export class Dashboard {
                 <div class="score-label">Quality score - ${qualitySource}</div>
                 <div class="score">${score}/100</div>
               </aside>
+            </section>
+
+            <section class="analytics-grid">
+              <article class="stat"><div class="label">Average tokens</div><div class="value">${analytics.averageTokens.toFixed(1)}</div></article>
+              <article class="stat"><div class="label">Average ambiguity</div><div class="value">${analytics.averageAmbiguity.toFixed(1)}%</div></article>
+              <article class="stat"><div class="label">Average redundancy</div><div class="value">${analytics.averageRedundancy.toFixed(1)}%</div></article>
+              <article class="stat"><div class="label">Average quality</div><div class="value">${analytics.averageQuality.toFixed(1)}</div></article>
+              <article class="stat"><div class="label">Average savings</div><div class="value">${money(analytics.averageOptimizationSavingsUsd)}</div></article>
+              <article class="stat"><div class="label">Average cost</div><div class="value">${money(analytics.averageCostUsd)}</div></article>
+            </section>
+
+            <section class="two">
+              <article class="panel">
+                <h2>Average metrics</h2>
+                <div class="chart-frame"><canvas id="analyticsAverageChart"></canvas></div>
+              </article>
+              <article class="panel">
+                <h2>Trend lines</h2>
+                <div class="chart-frame"><canvas id="analyticsTrendChart"></canvas></div>
+              </article>
+            </section>
+
+            <section class="panel analytics-table">
+              <h2>Recent analytics samples</h2>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Prompt</th>
+                    <th>Tokens</th>
+                    <th>Ambiguity</th>
+                    <th>Redundancy</th>
+                    <th>Quality</th>
+                    <th>Savings</th>
+                    <th>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${analytics.recentSamples.length ? analytics.recentSamples.map(sample => `
+                    <tr>
+                      <td>${escapeHtml(sample.label)}<div class="muted">${escapeHtml(new Date(sample.timestamp).toLocaleDateString())}</div></td>
+                      <td>${sample.inputTokens}</td>
+                      <td>${sample.ambiguity.toFixed(1)}%</td>
+                      <td>${sample.redundancy.toFixed(1)}%</td>
+                      <td>${sample.quality.toFixed(1)}</td>
+                      <td>${money(sample.optimizationSavingsUsd)}</td>
+                      <td>${money(sample.estimatedCostUsd)}</td>
+                    </tr>`).join("") : `<tr><td colspan="7" class="muted">No analytics samples yet. Analyze a prompt to generate trends and charts.</td></tr>`}
+                </tbody>
+              </table>
             </section>
 
             <section class="grid">
@@ -462,7 +547,7 @@ export class Dashboard {
           <script nonce="${csp}" src="${chartUri}"></script>
           <script nonce="${csp}">
             const vscode = acquireVsCodeApi();
-            ["cleanup", "expand", "minimize", "logout", "delete"].forEach(type => {
+            ["switch-project", "new-project", "cleanup", "expand", "minimize", "logout", "delete"].forEach(type => {
               const el = document.getElementById(type);
               if (el) el.addEventListener("click", () => vscode.postMessage({ type }));
             });
@@ -485,6 +570,86 @@ export class Dashboard {
                 },
                 options: {
                   plugins: { legend: { display: false } }
+                }
+              });
+            }
+
+            const analyticsAverageLabels = ${JSON.stringify(analyticsAverageLabels)};
+            const analyticsAverageValues = ${JSON.stringify(analyticsAverageValues)};
+            const analyticsTrendLabels = ${JSON.stringify(analyticsTrendLabels)};
+            const analyticsTrendQuality = ${JSON.stringify(analyticsTrendQuality)};
+            const analyticsTrendCost = ${JSON.stringify(analyticsTrendCost)};
+            const analyticsTrendSavings = ${JSON.stringify(analyticsTrendSavings)};
+
+            if (analyticsAverageLabels.length) {
+              new Chart(document.getElementById("analyticsAverageChart"), {
+                type: "bar",
+                data: {
+                  labels: analyticsAverageLabels,
+                  datasets: [{
+                    label: "Average",
+                    data: analyticsAverageValues,
+                    backgroundColor: ["rgba(31, 156, 207, 0.55)", "rgba(243, 169, 72, 0.55)", "rgba(245, 158, 11, 0.55)", "rgba(90, 211, 245, 0.55)", "rgba(34, 197, 94, 0.55)", "rgba(220, 38, 38, 0.55)"]
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    y: { beginAtZero: true }
+                  }
+                }
+              });
+            }
+
+            if (analyticsTrendLabels.length) {
+              new Chart(document.getElementById("analyticsTrendChart"), {
+                type: "line",
+                data: {
+                  labels: analyticsTrendLabels,
+                  datasets: [
+                    {
+                      label: "Quality",
+                      data: analyticsTrendQuality,
+                      borderColor: "#1f9ccf",
+                      backgroundColor: "rgba(31, 156, 207, 0.18)",
+                      yAxisID: "quality",
+                      tension: 0.25
+                    },
+                    {
+                      label: "Cost",
+                      data: analyticsTrendCost,
+                      borderColor: "#f3a948",
+                      backgroundColor: "rgba(243, 169, 72, 0.18)",
+                      yAxisID: "cost",
+                      tension: 0.25
+                    },
+                    {
+                      label: "Savings",
+                      data: analyticsTrendSavings,
+                      borderColor: "#5ad3f5",
+                      backgroundColor: "rgba(90, 211, 245, 0.18)",
+                      yAxisID: "cost",
+                      tension: 0.25
+                    }
+                  ]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  scales: {
+                    quality: {
+                      beginAtZero: true,
+                      max: 100,
+                      position: "left"
+                    },
+                    cost: {
+                      beginAtZero: true,
+                      position: "right",
+                      grid: { drawOnChartArea: false }
+                    }
+                  }
                 }
               });
             }

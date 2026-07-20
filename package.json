@@ -18,6 +18,23 @@
       { "command": "promptguard.openSettings", "title": "PromptGuard: Open Settings" }
       ,{ "command": "promptguard.openChat", "title": "PromptGuard: Open Chat (Analyse Mode)" }
       ,{ "command": "promptguard.openLocalChat", "title": "PromptGuard: Open Local Chat Panel" }
+      ,{ "command": "promptguard.openTokenProfiler", "title": "PromptGuard: Open Live Token Profiler" }
+      ,{ "command": "promptguard.openCostSimulator", "title": "PromptGuard: Open Cost Simulator" }
+      ,{ "command": "promptguard.openDeadCodeElimination", "title": "PromptGuard: Open Dead Code Elimination" }
+      ,{ "command": "promptguard.openDuplicateDetection", "title": "PromptGuard: Open Duplicate Detection" }
+      ,{ "command": "promptguard.openContextOptimizer", "title": "PromptGuard: Open Context Optimizer" }
+      ,{ "command": "promptguard.insertTemplateSnippet", "title": "PromptGuard: Insert Template Snippet" }
+      ,{ "command": "promptguard.createReusableTemplate", "title": "PromptGuard: Convert Current Prompt to Template" }
+      ,{ "command": "promptguard.validatePolicy", "title": "PromptGuard: Validate Workspace Policy" }
+      ,{ "command": "promptguard.browsePolicyPacks", "title": "PromptGuard: Browse Policy Packs" }
+      ,{ "command": "promptguard.validateBudget", "title": "PromptGuard: Validate Workspace Budget" }
+      ,{ "command": "promptguard.exportPromptHandoff", "title": "PromptGuard: Export Prompt Handoff" }
+      ,{ "command": "promptguard.showLearningSummary", "title": "PromptGuard: Show Learning Summary" }
+      ,{ "command": "promptguard.runBenchmarks", "title": "PromptGuard: Run Benchmark Suites" }
+      ,{ "command": "promptguard.exportAuditReport", "title": "PromptGuard: Export Audit Report" }
+      ,{ "command": "promptguard.manageProviderOptIn", "title": "PromptGuard: Manage Provider Opt-In" }
+      ,{ "command": "promptguard.browseProviders", "title": "PromptGuard: Browse Opt-In Providers" }
+      ,{ "command": "promptguard.browseTemplates", "title": "PromptGuard: Browse Prompt Templates" }
       ,{ "command": "promptguard.completeOnboarding", "title": "PromptGuard: Complete Cloud Onboarding" }
       ,{ "command": "promptguard.resetOnboarding", "title": "PromptGuard: Reset Onboarding and Caches (Fresh Start)" }
       ,{ "command": "promptguard.showRuntimeInfo", "title": "PromptGuard: Show Runtime Info" }
@@ -37,7 +54,14 @@
         "promptguard.disabledRules": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Rule IDs to disable in this workspace." },
         "promptguard.ignoreComments": { "type": "boolean", "default": false, "description": "Ignore comment-only lines during analysis." },
         "promptguard.modelPricing": { "type": "array", "default": [], "description": "Optional local pricing profiles in USD per million tokens. Match against model vendor, ID, or family.", "items": { "type": "object", "required": ["match", "inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "match": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } } },
+        "promptguard.providerPricing": { "type": "array", "default": [{ "provider": "groq", "displayName": "Groq", "inputPerMillionUsd": 0.2, "outputPerMillionUsd": 0.6, "latencyMs": 180 }, { "provider": "openai", "displayName": "OpenAI", "inputPerMillionUsd": 2, "outputPerMillionUsd": 8, "latencyMs": 420 }, { "provider": "claude", "displayName": "Claude", "inputPerMillionUsd": 3, "outputPerMillionUsd": 15, "latencyMs": 600 }, { "provider": "gemini", "displayName": "Gemini", "inputPerMillionUsd": 1.25, "outputPerMillionUsd": 5, "latencyMs": 350 }], "description": "Provider pricing used by the cost simulator. Prices are configurable per workspace.", "items": { "type": "object", "required": ["provider", "displayName", "inputPerMillionUsd", "outputPerMillionUsd", "latencyMs"], "properties": { "provider": { "type": "string", "enum": ["groq", "openai", "claude", "gemini"] }, "displayName": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 }, "latencyMs": { "type": "number", "minimum": 0 } } } },
+        "promptguard.costSimulatorMonthlyRuns": { "type": "number", "default": 500, "minimum": 0, "description": "Projected monthly prompt runs used by the cost simulator." },
+        "promptguard.enableLiveTokenProfiler": { "type": "boolean", "default": true, "description": "Enable live token profiling while typing." },
+        "promptguard.enableBudgetMode": { "type": "boolean", "default": true, "description": "Enable live budget warnings while typing and surface budget fixes in Problems." },
+        "promptguard.liveTokenPricing": { "type": "object", "default": { "inputPerMillionUsd": 0.075, "outputPerMillionUsd": 0.30 }, "description": "Default pricing used by the live token profiler when no model-specific pricing is selected.", "required": ["inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } },
+        "promptguard.enableLearningStore": { "type": "boolean", "default": false, "description": "Enable the privacy-first local learning store." },
         "promptguard.assessmentPathMode": { "type": "string", "enum": ["alwaysAsk", "preferLocal", "preferGroq"], "default": "alwaysAsk", "description": "How PromptGuard chooses local vs Groq path per prompt: always ask, prefer local, or prefer Groq." },
+        "promptguard.groqKeyMode": { "type": "string", "enum": ["strictProjectOnly", "workspaceThenProcessEnv"], "default": "strictProjectOnly", "description": "How PromptGuard resolves GROQ_API_KEY. strictProjectOnly reads only the selected project folder .env. workspaceThenProcessEnv checks workspace .env and then process environment." },
         "promptguard.apiBaseUrl": { "type": "string", "default": "https://api.prompt-guard-ai.com", "description": "Deployed PromptGuard API URL. Enables consent-based cloud prompt logging." },
         "promptguard.dataCollectionPolicyVersion": { "type": "string", "default": "2026-07-19", "description": "Version of the data-collection policy accepted during cloud logging onboarding." }
       }
@@ -52,6 +76,8 @@
     "compile": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "watch": "npm run compile -- --watch",
     "typecheck": "tsc --noEmit",
+    "check": "node scripts/promptguard-check.mjs",
+    "install-hooks": "node scripts/install-hooks.mjs",
     "test": "npm run typecheck && vitest run",
     "test:watch": "vitest"
   },

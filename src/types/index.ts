@@ -13,7 +13,85 @@ export interface PromptScore { total: number; breakdown: ScoreBreakdown; grade: 
 export interface ModelIdentity { vendor: string; id: string; family: string; name: string; }
 export interface PricingProfile { match: string; inputPerMillionUsd: number; outputPerMillionUsd: number; }
 export interface CostEstimate { inputTokens: number; outputTokens: number; estimatedCostUsd?: number; estimatedLatencyMs: number; wastedTokens: number; potentialSavingsUsd?: number; pricingSource: "configured" | "estimated" | "unavailable"; model?: ModelIdentity; }
-export interface OptimizationSuggestion { title: string; reason: string; optimizedPrompt: string; issuesAddressed: string[]; }
+export type ProviderId = "groq" | "openai" | "claude" | "gemini";
+export interface ProviderPricingProfile {
+  provider: ProviderId;
+  displayName: string;
+  inputPerMillionUsd: number;
+  outputPerMillionUsd: number;
+  latencyMs: number;
+}
+export interface CostSimulatorProviderComparison {
+  provider: ProviderId;
+  displayName: string;
+  inputCostUsdPerRun: number;
+  outputCostUsdPerRun: number;
+  totalCostUsdPerRun: number;
+  latencyMs: number;
+  monthlyRuns: number;
+  yearlyRuns: number;
+  monthlyInputCostUsd: number;
+  monthlyOutputCostUsd: number;
+  yearlyInputCostUsd: number;
+  yearlyOutputCostUsd: number;
+  optimizedMonthlyInputCostUsd: number;
+  optimizedMonthlyOutputCostUsd: number;
+  optimizedYearlyInputCostUsd: number;
+  optimizedYearlyOutputCostUsd: number;
+  savingsAfterOptimizationMonthlyUsd: number;
+  savingsAfterOptimizationYearlyUsd: number;
+}
+export interface CostSimulatorReport {
+  generatedAt: string;
+  prompt: string;
+  monthlyRuns: number;
+  yearlyRuns: number;
+  inputTokens: number;
+  outputTokens: number;
+  optimizedInputTokens: number;
+  optimizedOutputTokens: number;
+  optimizationSavingsTokens: number;
+  optimizationSavingsUsd: number;
+  providerComparisons: readonly CostSimulatorProviderComparison[];
+}
+export interface PromptAnalyticsSample {
+  label: string;
+  timestamp: string;
+  inputTokens: number;
+  ambiguity: number;
+  redundancy: number;
+  quality: number;
+  optimizationSavingsUsd: number;
+  estimatedCostUsd: number;
+}
+export interface PromptAnalyticsReport {
+  sampleCount: number;
+  averageTokens: number;
+  averageAmbiguity: number;
+  averageRedundancy: number;
+  averageQuality: number;
+  averageOptimizationSavingsUsd: number;
+  averageCostUsd: number;
+  recentSamples: readonly PromptAnalyticsSample[];
+}
+export type OptimizationDiffChangeType = "added" | "removed" | "modified";
+export interface OptimizationDiffChange {
+  id: string;
+  type: OptimizationDiffChangeType;
+  lineNumber: number;
+  originalText?: string;
+  optimizedText?: string;
+  tokenSavings: number;
+  costSavingsUsd: number;
+  accepted: boolean;
+}
+export interface OptimizationDiffView {
+  totalTokenSavings: number;
+  totalCostSavingsUsd: number;
+  changes: readonly OptimizationDiffChange[];
+  acceptedOptimizedPrompt: string;
+}
+export interface OptimizationSuggestion { title: string; reason: string; preview: string; optimizedPrompt: string; issuesAddressed: string[]; estimatedTokenSavings?: number; confidence?: number; diff?: string; diffView?: OptimizationDiffView; compressionSteps?: ReadonlyArray<{ label: string; description: string; tokensSaved: number }>; }
 export interface ModelRecommendation {
   provider: "groq" | "openai" | "claude" | "gemini";
   model: string;
