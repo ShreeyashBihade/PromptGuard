@@ -14,6 +14,51 @@ export interface ModelIdentity { vendor: string; id: string; family: string; nam
 export interface PricingProfile { match: string; inputPerMillionUsd: number; outputPerMillionUsd: number; }
 export interface CostEstimate { inputTokens: number; outputTokens: number; estimatedCostUsd?: number; estimatedLatencyMs: number; wastedTokens: number; potentialSavingsUsd?: number; pricingSource: "configured" | "estimated" | "unavailable"; model?: ModelIdentity; }
 export interface OptimizationSuggestion { title: string; reason: string; optimizedPrompt: string; issuesAddressed: string[]; }
-export interface AnalysisResult { prompt: string; issues: PromptIssue[]; score: PromptScore; scoreSource: "local" | "groq"; groqStatus?: string; cost: CostEstimate; optimization: OptimizationSuggestion; analyzedAt: string; }
+export interface ModelRecommendation {
+  provider: "groq" | "openai" | "claude" | "gemini";
+  model: string;
+  fit: "high" | "medium";
+  rationale: string;
+}
+
+export interface LocalInsights {
+  bestPractices: string[];
+  recommendations: ModelRecommendation[];
+  mode: "local-only" | "cloud-assisted";
+}
+
+export interface AnalysisResult { prompt: string; issues: PromptIssue[]; score: PromptScore; scoreSource: "local" | "groq"; groqStatus?: string; cost: CostEstimate; optimization: OptimizationSuggestion; analyzedAt: string; localInsights?: LocalInsights; }
 export interface PromptHistoryEntry { id: string; timestamp: string; originalPrompt: string; optimizedPrompt: string; score: number; improvement: number; estimatedSavings: number; }
 export interface RulePlugin { name: string; rules: PromptRule[]; }
+
+export interface PromptOptimizationLedgerEntry {
+  id: string;
+  timestamp: string;
+  source: "editor" | "local-chat" | "chat-participant" | "on-save" | "refine-expand" | "refine-minimize" | "refine-cleanup";
+  projectName: string;
+  inputPrompt: string;
+  outputPrompt: string;
+  inputTokens: number;
+  outputTokens: number;
+  reducedTokens: number;
+  reductionPercent: number;
+  estimatedSavingsUsd: number;
+  score?: number;
+}
+
+export interface PromptOptimizationLedgerTotals {
+  projectName: string;
+  totalEntries: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalReducedTokens: number;
+  totalEstimatedSavingsUsd: number;
+  averageReductionPercent: number;
+}
+
+export interface PromptOptimizationLedger {
+  version: 1;
+  updatedAt: string;
+  totals: PromptOptimizationLedgerTotals;
+  entries: PromptOptimizationLedgerEntry[];
+}

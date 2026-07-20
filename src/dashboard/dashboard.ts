@@ -1,16 +1,495 @@
 import * as vscode from "vscode";
-import { AnalysisResult, PromptHistoryEntry } from "../types";
+import { AnalysisResult, PromptHistoryEntry, PromptOptimizationLedger } from "../types";
 
 const nonce = (): string => Math.random().toString(36).slice(2);
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 export class Dashboard {
   private panel?: vscode.WebviewPanel;
-  constructor(private readonly extensionUri: vscode.Uri, private readonly onAction: (action: "cleanup" | "expand" | "minimize") => void) {}
-  show(result: AnalysisResult | undefined, history: PromptHistoryEntry[]): void {
-    if (!this.panel) { this.panel = vscode.window.createWebviewPanel("promptguard.dashboard", "PromptGuard Dashboard", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true }); this.panel.onDidDispose(() => { this.panel = undefined; }); this.panel.webview.onDidReceiveMessage((message: unknown) => { const type = typeof message === "object" && message !== null ? (message as { type?: unknown }).type : undefined; if (type === "cleanup" || type === "expand" || type === "minimize") this.onAction(type); }); }
-    this.panel.webview.html = this.html(this.panel.webview, result, history); this.panel.reveal();
+
+  constructor(private readonly extensionUri: vscode.Uri, private readonly onAction: (action: "cleanup" | "expand" | "minimize" | "logout" | "delete") => void) {}
+
+  show(result: AnalysisResult | undefined, history: PromptHistoryEntry[], ledger?: PromptOptimizationLedger): void {
+    if (!this.panel) {
+      this.panel = vscode.window.createWebviewPanel("promptguard.dashboard", "PromptGuard Dashboard", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
+      this.panel.onDidDispose(() => { this.panel = undefined; });
+      this.panel.webview.onDidReceiveMessage((message: unknown) => {
+        const type = typeof message === "object" && message !== null ? (message as { type?: unknown }).type : undefined;
+        if (type === "cleanup" || type === "expand" || type === "minimize" || type === "logout" || type === "delete") this.onAction(type);
+      });
+    }
+    this.panel.webview.html = this.html(this.panel.webview, result, history, ledger);
+    this.panel.reveal();
   }
-  private html(webview: vscode.Webview, result: AnalysisResult | undefined, history: PromptHistoryEntry[]): string {
-    const csp = nonce(); const score = result?.score.total ?? 0; const issues = result?.issues ?? []; const breakdown = result?.score.breakdown; const chartUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "node_modules", "chart.js", "dist", "chart.umd.js"));
-    return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${csp}';"><style>body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:28px;max-width:1200px;margin:auto}.hero{display:flex;justify-content:space-between;align-items:end}.brand,.muted{color:var(--vscode-descriptionForeground)}.brand{letter-spacing:.12em;font-size:12px;color:#75beff}.score{font-size:54px;font-weight:700}.actions,.grid{display:flex;gap:9px;flex-wrap:wrap}.actions{margin:18px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:14px}.card{border:1px solid var(--vscode-widget-border);border-radius:12px;padding:16px;background:var(--vscode-sideBar-background)}button{background:#0e639c;color:white;border:0;border-radius:6px;padding:9px 13px;font:inherit;cursor:pointer}.secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.issue{padding:10px 0;border-bottom:1px solid var(--vscode-widget-border)}@media(max-width:700px){.two{grid-template-columns:1fr}}</style></head><body><div class="hero"><div><div class="brand">PROMPTGUARD · LOCAL GOVERNANCE</div><h1>Prompt intelligence, made measurable.</h1><p class="muted">${result?.groqStatus ?? "Analyze a prompt to populate your dashboard."}</p><div class="actions"><button id="cleanup" class="secondary">Offline safe cleanup</button><button id="expand">Expand prompt</button><button id="minimize" class="secondary">Minimize token usage</button></div></div><div><div class="muted">QUALITY SCORE · ${result?.scoreSource === "groq" ? "Groq-led" : "Local"}</div><div class="score">${score}/100</div></div></div><div class="grid"><div class="card"><div class="muted">Input tokens</div><h2>${result?.cost.inputTokens ?? 0}</h2></div><div class="card"><div class="muted">Potential savings</div><h2>${result?.cost.wastedTokens ?? 0} tokens</h2></div><div class="card"><div class="muted">Estimated latency</div><h2>${result?.cost.estimatedLatencyMs ?? 0} ms</h2></div><div class="card"><div class="muted">History entries</div><h2>${history.length}</h2></div></div><div class="two"><div class="card"><h2>Quality dimensions</h2><canvas id="radar"></canvas></div><div class="card"><h2>Findings</h2>${issues.length ? issues.slice(0, 6).map(issue => `<div class="issue"><strong>${issue.title}</strong><div class="muted">${issue.suggestedFix}</div></div>`).join("") : "No active findings."}</div></div><script nonce="${csp}" src="${chartUri}"></script><script nonce="${csp}">const vscode=acquireVsCodeApi();['cleanup','expand','minimize'].forEach(type=>document.getElementById(type).addEventListener('click',()=>vscode.postMessage({type})));const values=${JSON.stringify(breakdown ? Object.values(breakdown) : [])};const labels=${JSON.stringify(breakdown ? Object.keys(breakdown) : [])};if(labels.length)new Chart(document.getElementById('radar'),{type:'radar',data:{labels,datasets:[{data:values,borderColor:'#75beff',backgroundColor:'rgba(117,190,255,.18)'}]},options:{plugins:{legend:{display:false}},scales:{r:{min:0,max:100,ticks:{display:false}}}}});</script></body></html>`;
+
+  private html(webview: vscode.Webview, result: AnalysisResult | undefined, history: PromptHistoryEntry[], ledger?: PromptOptimizationLedger): string {
+    const csp = nonce();
+    const score = result?.score.total ?? 0;
+    const issues = result?.issues ?? [];
+    const breakdown = result?.score.breakdown;
+    const chartUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "node_modules", "chart.js", "dist", "chart.umd.js"));
+    const status = escapeHtml(result?.groqStatus ?? "Analyze a prompt to populate your dashboard.");
+    const qualitySource = result?.scoreSource === "groq" ? "Groq-led" : "Local";
+    const bestPractices = result?.localInsights?.bestPractices ?? [];
+    const modelRecommendations = result?.localInsights?.recommendations ?? [];
+    const totals = ledger?.totals;
+    const entries = ledger?.entries ?? [];
+    const latest = entries.slice(0, 8).map(entry => `
+      <tr>
+        <td>${escapeHtml(new Date(entry.timestamp).toLocaleDateString())}</td>
+        <td>${escapeHtml(entry.source)}</td>
+        <td>${entry.inputTokens}</td>
+        <td>${entry.outputTokens}</td>
+        <td>${entry.reducedTokens}</td>
+        <td>${entry.reductionPercent.toFixed(1)}%</td>
+      </tr>`).join("") || `<tr><td colspan="6" class="muted">No optimization entries yet. Analyze a prompt to start tracking.</td></tr>`;
+    const money = (value: number | undefined): string => value === undefined ? "$0.000000" : `$${value.toFixed(6)}`;
+    const nextMilestone = Math.ceil(((totals?.totalReducedTokens ?? 0) + 1) / 1000) * 1000;
+    const milestoneProgress = nextMilestone > 0 ? Math.min(100, ((totals?.totalReducedTokens ?? 0) / nextMilestone) * 100) : 0;
+    const trendEntries = [...entries].slice(0, 10).reverse();
+    const issueHtml = issues.length
+      ? issues.slice(0, 6).map((issue, index) => `
+        <article class="issue" style="--delay:${index + 2};">
+          <h3>${escapeHtml(issue.title)}</h3>
+          <p>${escapeHtml(issue.suggestedFix)}</p>
+        </article>`).join("")
+      : "<p class=\"muted\">No active findings.</p>";
+
+    return `<!doctype html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${csp}';">
+          <style>
+            :root {
+              --surface: var(--vscode-editorWidget-background);
+              --surface-alt: color-mix(in srgb, var(--vscode-sideBar-background) 82%, #0e2633 18%);
+              --ink: var(--vscode-foreground);
+              --muted: var(--vscode-descriptionForeground);
+              --line: color-mix(in srgb, var(--vscode-widget-border) 70%, #23556d 30%);
+              --accent: #1f9ccf;
+              --accent-soft: rgba(31, 156, 207, 0.2);
+              --warm: #f3a948;
+            }
+
+            * { box-sizing: border-box; }
+
+            body {
+              margin: 0;
+              padding: 30px;
+              min-height: 100vh;
+              color: var(--ink);
+              font-family: "Bahnschrift", "Segoe UI Variable Text", "Trebuchet MS", var(--vscode-font-family);
+              background:
+                radial-gradient(1200px 500px at 100% 0%, rgba(31, 156, 207, 0.16), transparent 60%),
+                radial-gradient(900px 400px at 0% 100%, rgba(243, 169, 72, 0.12), transparent 60%),
+                var(--vscode-editor-background);
+            }
+
+            .shell {
+              max-width: 1180px;
+              margin: 0 auto;
+              animation: fade-in 280ms ease-out;
+            }
+
+            .hero {
+              display: grid;
+              gap: 20px;
+              grid-template-columns: 1fr auto;
+              padding: 24px;
+              border-radius: 18px;
+              border: 1px solid var(--line);
+              background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 75%, #193445 25%), var(--surface));
+              box-shadow: 0 16px 28px rgba(0, 0, 0, 0.18);
+            }
+
+            .brand {
+              letter-spacing: 0.12em;
+              text-transform: uppercase;
+              font-size: 12px;
+              color: var(--warm);
+              margin-bottom: 8px;
+            }
+
+            h1 {
+              margin: 0;
+              font-size: clamp(1.45rem, 2vw, 2rem);
+              line-height: 1.22;
+              font-weight: 700;
+            }
+
+            .muted {
+              color: var(--muted);
+            }
+
+            .status {
+              margin: 12px 0 0;
+              line-height: 1.45;
+            }
+
+            .score-block {
+              min-width: 220px;
+              align-self: end;
+              text-align: right;
+            }
+
+            .score-label {
+              font-size: 12px;
+              letter-spacing: 0.07em;
+              text-transform: uppercase;
+              color: var(--muted);
+            }
+
+            .score {
+              font-size: clamp(44px, 6vw, 66px);
+              line-height: 1;
+              font-weight: 800;
+              margin-top: 6px;
+              color: color-mix(in srgb, var(--ink) 90%, #b6ecff 10%);
+            }
+
+            .actions {
+              display: flex;
+              flex-wrap: nowrap;
+              overflow-x: auto;
+              gap: 10px;
+              margin-top: 18px;
+              padding-bottom: 4px;
+            }
+
+            .actions button {
+              flex: 0 0 auto;
+              white-space: nowrap;
+            }
+
+            button {
+              appearance: none;
+              border: 1px solid transparent;
+              border-radius: 999px;
+              padding: 9px 15px;
+              font: inherit;
+              font-weight: 600;
+              color: #fff;
+              background: linear-gradient(90deg, #1578a4, #1f9ccf);
+              cursor: pointer;
+              transition: transform 140ms ease, filter 140ms ease;
+            }
+
+            button:hover {
+              transform: translateY(-1px);
+              filter: brightness(1.08);
+            }
+
+            button.secondary {
+              background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 80%, #203744 20%);
+              color: var(--vscode-button-secondaryForeground);
+              border-color: var(--line);
+            }
+
+            .grid {
+              margin-top: 16px;
+              display: grid;
+              grid-template-columns: repeat(4, minmax(170px, 1fr));
+              gap: 12px;
+            }
+
+            .stat,
+            .panel {
+              border-radius: 14px;
+              border: 1px solid var(--line);
+              background: linear-gradient(180deg, var(--surface-alt), var(--surface));
+              box-shadow: 0 12px 20px rgba(0, 0, 0, 0.14);
+              animation: lift-in 220ms ease-out;
+            }
+
+            .stat {
+              padding: 14px 16px;
+            }
+
+            .stat .label {
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 0.06em;
+              color: var(--muted);
+            }
+
+            .stat .value {
+              margin-top: 6px;
+              font-size: 26px;
+              font-weight: 700;
+              color: color-mix(in srgb, var(--ink) 90%, #c7f2ff 10%);
+            }
+
+            .two {
+              margin-top: 14px;
+              display: grid;
+              grid-template-columns: 1.1fr 0.9fr;
+              gap: 14px;
+            }
+
+            .history-panel {
+              margin-top: 14px;
+            }
+
+            .momentum {
+              display: grid;
+              gap: 12px;
+            }
+
+            .milestone {
+              border: 1px solid var(--line);
+              border-radius: 12px;
+              padding: 10px 12px;
+              background: color-mix(in srgb, var(--surface-alt) 82%, #1a3140 18%);
+            }
+
+            .milestone strong {
+              font-size: 14px;
+            }
+
+            .progress {
+              margin-top: 8px;
+              width: 100%;
+              height: 10px;
+              border-radius: 999px;
+              background: rgba(160, 200, 220, 0.18);
+              overflow: hidden;
+            }
+
+            .progress > span {
+              display: block;
+              height: 100%;
+              width: 0;
+              background: linear-gradient(90deg, #1f9ccf, #5ad3f5);
+            }
+
+            .chips {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 8px;
+              margin-bottom: 8px;
+            }
+
+            .chip {
+              border: 1px solid var(--line);
+              border-radius: 999px;
+              padding: 6px 10px;
+              font-size: 11px;
+              color: color-mix(in srgb, var(--ink) 90%, #d5f5ff 10%);
+              background: color-mix(in srgb, var(--surface-alt) 80%, #112634 20%);
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 12px;
+            }
+
+            th, td {
+              text-align: left;
+              padding: 8px 6px;
+              border-bottom: 1px solid var(--line);
+            }
+
+            th {
+              color: var(--muted);
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              font-size: 11px;
+            }
+
+            .panel {
+              padding: 16px;
+            }
+
+            .panel h2 {
+              margin: 0 0 12px;
+              font-size: 16px;
+            }
+
+            .issue {
+              --delay: 1;
+              padding: 10px 0;
+              border-bottom: 1px solid var(--line);
+              animation: fade-slide 260ms ease-out both;
+              animation-delay: calc(var(--delay) * 45ms);
+            }
+
+            .issue:last-child {
+              border-bottom: 0;
+            }
+
+            .issue h3 {
+              margin: 0 0 4px;
+              font-size: 13px;
+            }
+
+            .issue p {
+              margin: 0;
+              color: var(--muted);
+              line-height: 1.35;
+            }
+
+            @keyframes fade-in {
+              from { opacity: 0; transform: translateY(4px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+
+            @keyframes lift-in {
+              from { opacity: 0; transform: translateY(6px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+
+            @keyframes fade-slide {
+              from { opacity: 0; transform: translateX(-4px); }
+              to { opacity: 1; transform: translateX(0); }
+            }
+
+            @media (max-width: 980px) {
+              .hero {
+                grid-template-columns: 1fr;
+              }
+
+              .score-block {
+                text-align: left;
+              }
+
+              .grid {
+                grid-template-columns: repeat(2, minmax(170px, 1fr));
+              }
+
+              .two {
+                grid-template-columns: 1fr;
+              }
+            }
+
+            @media (max-width: 640px) {
+              body { padding: 16px; }
+              .grid { grid-template-columns: 1fr; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="shell">
+            <section class="hero">
+              <div>
+                <div class="brand">PromptGuard - Prompt Governance</div>
+                <h1>Prompt intelligence with clear guardrails and measurable outcomes.</h1>
+                <p class="status muted">${status}</p>
+                <div class="actions">
+                  <button id="cleanup" class="secondary">Offline safe cleanup</button>
+                  <button id="expand">Expand prompt</button>
+                  <button id="minimize" class="secondary">Minimize token usage</button>
+                  <button id="logout" class="secondary">Logout</button>
+                  <button id="delete" class="secondary">Delete data</button>
+                </div>
+              </div>
+              <aside class="score-block">
+                <div class="score-label">Quality score - ${qualitySource}</div>
+                <div class="score">${score}/100</div>
+              </aside>
+            </section>
+
+            <section class="grid">
+              <article class="stat"><div class="label">Input tokens (current)</div><div class="value">${result?.cost.inputTokens ?? 0}</div></article>
+              <article class="stat"><div class="label">Reduced tokens (project)</div><div class="value">${totals?.totalReducedTokens ?? 0}</div></article>
+              <article class="stat"><div class="label">Estimated latency (ms)</div><div class="value">${result?.cost.estimatedLatencyMs ?? 0}</div></article>
+              <article class="stat"><div class="label">Optimization entries</div><div class="value">${totals?.totalEntries ?? history.length}</div></article>
+            </section>
+
+            <section class="grid">
+              <article class="stat"><div class="label">Project</div><div class="value">${escapeHtml(totals?.projectName ?? "workspace")}</div></article>
+              <article class="stat"><div class="label">Input tokens (project)</div><div class="value">${totals?.totalInputTokens ?? 0}</div></article>
+              <article class="stat"><div class="label">Output tokens (project)</div><div class="value">${totals?.totalOutputTokens ?? 0}</div></article>
+              <article class="stat"><div class="label">Estimated savings (USD)</div><div class="value">${money(totals?.totalEstimatedSavingsUsd)}</div></article>
+            </section>
+
+            <section class="two">
+              <article class="panel">
+                <h2>Optimization momentum</h2>
+                <div class="momentum">
+                  <canvas id="momentumChart"></canvas>
+                  <div class="milestone">
+                    <strong>Next token-reduction milestone: ${nextMilestone.toLocaleString()}</strong>
+                    <p class="muted">You have reduced ${(totals?.totalReducedTokens ?? 0).toLocaleString()} tokens so far across this project.</p>
+                    <div class="progress"><span style="width:${milestoneProgress.toFixed(1)}%"></span></div>
+                  </div>
+                </div>
+              </article>
+              <article class="panel">
+                <h2>Top findings</h2>
+                ${issueHtml}
+              </article>
+            </section>
+
+            <section class="two">
+              <article class="panel">
+                <h2>Local best practices</h2>
+                ${bestPractices.length ? `<div class="chips">${bestPractices.map(practice => `<span class="chip">${escapeHtml(practice)}</span>`).join("")}</div>` : `<p class="muted">Run a prompt analysis to generate local best-practice guidance.</p>`}
+              </article>
+              <article class="panel">
+                <h2>Suggested models (local knowledge)</h2>
+                ${modelRecommendations.length ? modelRecommendations.map(rec => `<article class="issue"><h3>${escapeHtml(rec.provider)}/${escapeHtml(rec.model)} (${escapeHtml(rec.fit)})</h3><p>${escapeHtml(rec.rationale)}</p></article>`).join("") : `<p class="muted">No model recommendations yet.</p>`}
+              </article>
+            </section>
+
+            <section class="panel history-panel">
+              <h2>Optimization history and token deltas</h2>
+              <p class="muted">Average reduction: ${totals?.averageReductionPercent?.toFixed(1) ?? "0.0"}% · Ledger file: .promptguard/prompt-optimizations.json</p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Input</th>
+                    <th>Output</th>
+                    <th>Reduced</th>
+                    <th>Delta</th>
+                  </tr>
+                </thead>
+                <tbody>${latest}</tbody>
+              </table>
+            </section>
+          </main>
+
+          <script nonce="${csp}" src="${chartUri}"></script>
+          <script nonce="${csp}">
+            const vscode = acquireVsCodeApi();
+            ["cleanup", "expand", "minimize", "logout", "delete"].forEach(type => {
+              const el = document.getElementById(type);
+              if (el) el.addEventListener("click", () => vscode.postMessage({ type }));
+            });
+
+            const momentumLabels = ${JSON.stringify(trendEntries.map(entry => new Date(entry.timestamp).toLocaleDateString()))};
+            const momentumValues = ${JSON.stringify(trendEntries.map(entry => entry.reducedTokens))};
+            if (momentumLabels.length) {
+              new Chart(document.getElementById("momentumChart"), {
+                type: "bar",
+                data: {
+                  labels: momentumLabels,
+                  datasets: [{
+                    label: "Reduced tokens",
+                    data: momentumValues,
+                    borderColor: "#1f9ccf",
+                    backgroundColor: "rgba(31, 156, 207, 0.48)",
+                    pointBackgroundColor: "#f3a948",
+                    borderWidth: 2
+                  }]
+                },
+                options: {
+                  plugins: { legend: { display: false } }
+                }
+              });
+            }
+          </script>
+        </body>
+      </html>`;
   }
 }

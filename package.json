@@ -2,7 +2,7 @@
   "name": "promptguard",
   "displayName": "PromptGuard",
   "description": "Local-first prompt linting, scoring and optimization for VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "promptguard",
   "license": "MIT",
   "engines": { "vscode": "^1.105.0" },
@@ -16,8 +16,17 @@
       { "command": "promptguard.optimize", "title": "PromptGuard: Preview Optimization" },
       { "command": "promptguard.showHistory", "title": "PromptGuard: Show History" },
       { "command": "promptguard.openSettings", "title": "PromptGuard: Open Settings" }
-      ,{ "command": "promptguard.openChat", "title": "PromptGuard: Open Local Chat" }
+      ,{ "command": "promptguard.openChat", "title": "PromptGuard: Open Chat (Analyse Mode)" }
+      ,{ "command": "promptguard.openLocalChat", "title": "PromptGuard: Open Local Chat Panel" }
+      ,{ "command": "promptguard.completeOnboarding", "title": "PromptGuard: Complete Cloud Onboarding" }
+      ,{ "command": "promptguard.resetOnboarding", "title": "PromptGuard: Reset Onboarding and Caches (Fresh Start)" }
+      ,{ "command": "promptguard.showRuntimeInfo", "title": "PromptGuard: Show Runtime Info" }
       ,{ "command": "promptguard.configureGroq", "title": "PromptGuard: Configure Groq" }
+      ,{ "command": "promptguard.togglePathMode", "title": "PromptGuard: Toggle Path Mode (Ask/Local/Groq)" }
+      ,{ "command": "promptguard.preferences", "title": "PromptGuard: Preferences" }
+      ,{ "command": "promptguard.settings", "title": "PromptGuard: Settings" }
+      ,{ "command": "promptguard.logout", "title": "PromptGuard: Logout" }
+      ,{ "command": "promptguard.deleteData", "title": "PromptGuard: Delete Account and Local Data" }
     ],
     "configuration": {
       "title": "PromptGuard",
@@ -28,13 +37,14 @@
         "promptguard.disabledRules": { "type": "array", "default": [], "items": { "type": "string" }, "description": "Rule IDs to disable in this workspace." },
         "promptguard.ignoreComments": { "type": "boolean", "default": false, "description": "Ignore comment-only lines during analysis." },
         "promptguard.modelPricing": { "type": "array", "default": [], "description": "Optional local pricing profiles in USD per million tokens. Match against model vendor, ID, or family.", "items": { "type": "object", "required": ["match", "inputPerMillionUsd", "outputPerMillionUsd"], "properties": { "match": { "type": "string" }, "inputPerMillionUsd": { "type": "number", "minimum": 0 }, "outputPerMillionUsd": { "type": "number", "minimum": 0 } } } },
-        "promptguard.apiBaseUrl": { "type": "string", "default": "http://127.0.0.1:3000", "description": "Deployed PromptGuard API URL. Enables consent-based cloud prompt logging." },
+        "promptguard.assessmentPathMode": { "type": "string", "enum": ["alwaysAsk", "preferLocal", "preferGroq"], "default": "alwaysAsk", "description": "How PromptGuard chooses local vs Groq path per prompt: always ask, prefer local, or prefer Groq." },
+        "promptguard.apiBaseUrl": { "type": "string", "default": "https://api.prompt-guard-ai.com", "description": "Deployed PromptGuard API URL. Enables consent-based cloud prompt logging." },
         "promptguard.dataCollectionPolicyVersion": { "type": "string", "default": "2026-07-19", "description": "Version of the data-collection policy accepted during cloud logging onboarding." }
       }
     },
     "viewsContainers": { "activitybar": [{ "id": "promptguard", "title": "PromptGuard", "icon": "resources/promptguard.svg" }] },
     "views": { "promptguard": [{ "id": "promptguard.navigator", "name": "PromptGuard" }] },
-    "chatParticipants": [{ "id": "promptguard.analyzer", "name": "promptguard", "fullName": "PromptGuard", "description": "Analyze a prompt before you send it to a model", "isSticky": true, "commands": [{ "name": "analyze", "description": "Analyze prompt quality, safety, and model-aware token usage" }] }],
+    "chatParticipants": [{ "id": "promptguard.analyzer", "name": "promptguard", "fullName": "PromptGuard", "description": "Analyze a prompt before you send it to a model", "isSticky": true, "commands": [{ "name": "analyze", "description": "Analyze prompt quality, safety, and model-aware token usage" }, { "name": "settings", "description": "Open PromptGuard settings and path preferences" }, { "name": "preferences", "description": "Configure analysis path preferences" }] }],
     "languageModelChatProviders": [{ "vendor": "promptguard-groq", "displayName": "PromptGuard Groq", "managementCommand": "promptguard.configureGroq" }],
     "menus": { "editor/context": [{ "command": "promptguard.analyze", "group": "navigation@100" }] }
   },
@@ -42,8 +52,9 @@
     "compile": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "watch": "npm run compile -- --watch",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck"
+    "test": "npm run typecheck && vitest run",
+    "test:watch": "vitest"
   },
-  "devDependencies": { "@types/node": "^20.14.10", "@types/vscode": "^1.90.0", "esbuild": "^0.23.0", "typescript": "^5.5.4" },
+  "devDependencies": { "@types/node": "^20.14.10", "@types/vscode": "^1.90.0", "esbuild": "^0.23.0", "typescript": "^5.5.4", "vitest": "^2.0.5" },
   "dependencies": { "chart.js": "^4.4.3" }
 }
