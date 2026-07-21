@@ -14,10 +14,8 @@ export interface PromptGuardSettingsPanelState {
   readonly minimumPromptLength: number;
   readonly assessmentPathMode: AssessmentPathMode;
   readonly groqKeyMode: GroqKeyMode;
-  readonly enableLiveTokenProfiler: boolean;
   readonly enableBudgetMode: boolean;
   readonly enableLearningStore: boolean;
-  readonly costSimulatorMonthlyRuns: number;
 }
 
 export interface PromptGuardSettingsPanelUpdate {
@@ -26,10 +24,8 @@ export interface PromptGuardSettingsPanelUpdate {
   readonly minimumPromptLength: number;
   readonly assessmentPathMode: AssessmentPathMode;
   readonly groqKeyMode: GroqKeyMode;
-  readonly enableLiveTokenProfiler: boolean;
   readonly enableBudgetMode: boolean;
   readonly enableLearningStore: boolean;
-  readonly costSimulatorMonthlyRuns: number;
 }
 
 export class PromptGuardSettingsPanel {
@@ -79,10 +75,8 @@ export class PromptGuardSettingsPanel {
         minimumPromptLength: Math.max(0, Number(data.minimumPromptLength) || 0),
         assessmentPathMode: this.pathMode(data.assessmentPathMode),
         groqKeyMode: this.keyMode(data.groqKeyMode),
-        enableLiveTokenProfiler: Boolean(data.enableLiveTokenProfiler),
         enableBudgetMode: Boolean(data.enableBudgetMode),
-        enableLearningStore: Boolean(data.enableLearningStore),
-        costSimulatorMonthlyRuns: Math.max(0, Number(data.costSimulatorMonthlyRuns) || 0)
+        enableLearningStore: Boolean(data.enableLearningStore)
       };
 
       await this.handlers.onSave(update);
@@ -148,10 +142,6 @@ export class PromptGuardSettingsPanel {
                   <input id="minimumPromptLength" type="number" min="0" value="${state.minimumPromptLength}" />
                 </div>
                 <div class="field">
-                  <label for="costSimulatorMonthlyRuns">Cost simulator monthly runs</label>
-                  <input id="costSimulatorMonthlyRuns" type="number" min="0" value="${state.costSimulatorMonthlyRuns}" />
-                </div>
-                <div class="field">
                   <label for="assessmentPathMode">Assessment path mode</label>
                   <select id="assessmentPathMode">
                     <option value="alwaysAsk" ${state.assessmentPathMode === "alwaysAsk" ? "selected" : ""}>Always ask per prompt</option>
@@ -171,9 +161,9 @@ export class PromptGuardSettingsPanel {
               <div class="grid">
                 <label class="toggle"><input id="enabled" type="checkbox" ${state.enabled ? "checked" : ""} /> Enable PromptGuard analysis</label>
                 <label class="toggle"><input id="analyzeOnSave" type="checkbox" ${state.analyzeOnSave ? "checked" : ""} /> Analyze on save (local)</label>
-                <label class="toggle"><input id="enableLiveTokenProfiler" type="checkbox" ${state.enableLiveTokenProfiler ? "checked" : ""} /> Enable live token profiler</label>
                 <label class="toggle"><input id="enableBudgetMode" type="checkbox" ${state.enableBudgetMode ? "checked" : ""} /> Enable budget mode</label>
                 <label class="toggle"><input id="enableLearningStore" type="checkbox" ${state.enableLearningStore ? "checked" : ""} /> Enable learning store</label>
+                
               </div>
 
               <div class="actions">
@@ -197,10 +187,8 @@ export class PromptGuardSettingsPanel {
                   minimumPromptLength: byId('minimumPromptLength').value,
                   assessmentPathMode: byId('assessmentPathMode').value,
                   groqKeyMode: byId('groqKeyMode').value,
-                  enableLiveTokenProfiler: byId('enableLiveTokenProfiler').checked,
                   enableBudgetMode: byId('enableBudgetMode').checked,
-                  enableLearningStore: byId('enableLearningStore').checked,
-                  costSimulatorMonthlyRuns: byId('costSimulatorMonthlyRuns').value
+                  enableLearningStore: byId('enableLearningStore').checked
                 }
               });
             });

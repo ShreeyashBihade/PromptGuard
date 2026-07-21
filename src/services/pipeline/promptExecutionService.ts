@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { PromptAnalyzer } from "../../analysis/promptAnalyzer";
 import { LocalPromptAdvisor } from "../../analysis/localPromptAdvisor";
 import { GroqGateway } from "../../integrations/groq/groqGateway";
+import { PromptCompressionEngine } from "../../improver/promptCompressionEngine";
 import { HistoryStore } from "../../history/historyStore";
 import { OptimizationLedgerStore } from "../../history/optimizationLedger";
 import { AnalysisResult, PromptHistoryEntry } from "../../types";
@@ -27,6 +28,7 @@ export class PromptExecutionService {
   private readonly judgementCache = new Map<string, { expiresAt: number; score: number; rationale: string; costUsd: number }>();
   private readonly compressionCache = new Map<string, { expiresAt: number; improvedPrompt: string; outputTokens: number; costUsd: number }>();
   private readonly advisor = new LocalPromptAdvisor();
+  private readonly compressionEngine = new PromptCompressionEngine();
 
   private static readonly MIN_COMPRESSION_WIN_TOKENS = 4;
   private static readonly LOCAL_COMPRESSION_GOAL_TOKENS = 8;
@@ -287,7 +289,8 @@ export class PromptExecutionService {
     try {
       const localCandidates = [
         { method: "caveman", text: this.cavemanCompress(prompt) },
-        { method: "rtk", text: this.rtkCompress(prompt) }
+        { method: "rtk", text: this.rtkCompress(prompt) },
+        { method: "promptguard", text: this.compressionEngine.compress(prompt).optimizedPrompt }
       ]
         .map(candidate => this.evaluateCompressionCandidate(prompt, candidate.text, candidate.method))
         .filter((candidate): candidate is { method: string; text: string; beforeTokens: number; afterTokens: number; reducedTokens: number } => Boolean(candidate));
@@ -352,7 +355,7 @@ export class PromptExecutionService {
   }
 
   private applyCompressionResult(result: AnalysisResult, method: string, optimizedPrompt: string, reducedTokens: number, compressionCostUsd: number): void {
-    const prettyMethod = method === "rtk" ? "RTK" : method === "caveman" ? "Caveman" : "Groq";
+    const prettyMethod = method === "rtk" ? "RTK" : method === "caveman" ? "Caveman" : method === "promptguard" ? "PromptGuard" : "Groq";
     result.optimization = {
       ...result.optimization,
       title: `${prettyMethod} token-optimized prompt`,

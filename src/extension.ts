@@ -22,10 +22,6 @@ import { PromptGuardApi } from "./api/promptGuardApi";
 import { OnboardingGate } from "./services/onboarding/onboardingGate";
 import { PromptTraceLogger } from "./services/tracing/promptTraceLogger";
 import { PromptExecutionService } from "./services/pipeline/promptExecutionService";
-import { TokenProfilerService, TokenProfileReport } from "./services/tokenProfiler";
-import { TokenProfilerPanel } from "./ui/tokenProfilerPanel";
-import { PromptCostSimulatorService } from "./services/cost/promptCostSimulatorService";
-import { CostSimulatorPanel } from "./ui/costSimulatorPanel";
 import { PromptPolicyService } from "./services/policy/promptPolicyService";
 import { PromptPolicyPackService } from "./services/policy/promptPolicyPackService";
 import { PromptBudgetService } from "./services/budget/promptBudgetService";
@@ -40,10 +36,6 @@ import { PromptHandoffService } from "./services/handoff/promptHandoffService";
 import { PromptLintService } from "./services/lint/promptLintService";
 import { PromptDuplicateDetectionService } from "./services/duplicates/promptDuplicateDetectionService";
 import { DuplicateDetectionPanel } from "./ui/duplicateDetectionPanel";
-import { PromptContextOptimizerService } from "./services/context/promptContextOptimizerService";
-import { ContextOptimizerPanel } from "./ui/contextOptimizerPanel";
-import { PromptDeadCodeEliminationService } from "./services/deadCode/promptDeadCodeEliminationService";
-import { DeadCodeEliminationPanel } from "./ui/deadCodeEliminationPanel";
 import { PromptGuardSettingsPanel } from "./ui/settingsPanel";
 import { TemplateWorkbenchPanel } from "./ui/templateWorkbenchPanel";
 
@@ -79,16 +71,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const providerCatalogService = new PromptProviderCatalogService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
   const providerRegistryService = new PromptProviderRegistryService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
   const handoffService = new PromptHandoffService();
-  const tokenProfiler = new TokenProfilerService();
-  const tokenProfilerPanel = new TokenProfilerPanel();
-  const costSimulatorService = new PromptCostSimulatorService();
-  const costSimulatorPanel = new CostSimulatorPanel();
   const duplicateDetectionService = new PromptDuplicateDetectionService();
   const duplicateDetectionPanel = new DuplicateDetectionPanel();
-  const contextOptimizerService = new PromptContextOptimizerService();
-  const contextOptimizerPanel = new ContextOptimizerPanel();
-  const deadCodeEliminationService = new PromptDeadCodeEliminationService();
-  const deadCodeEliminationPanel = new DeadCodeEliminationPanel();
   const settingsPanel = new PromptGuardSettingsPanel({
     onSave: async update => {
       const configuration = vscode.workspace.getConfiguration("promptguard");
@@ -98,12 +82,9 @@ export function activate(context: vscode.ExtensionContext): void {
       await configuration.update("minimumPromptLength", update.minimumPromptLength, target);
       await configuration.update("assessmentPathMode", update.assessmentPathMode, target);
       await configuration.update("groqKeyMode", update.groqKeyMode, target);
-      await configuration.update("enableLiveTokenProfiler", update.enableLiveTokenProfiler, target);
       await configuration.update("enableBudgetMode", update.enableBudgetMode, target);
       await configuration.update("enableLearningStore", update.enableLearningStore, target);
-      await configuration.update("costSimulatorMonthlyRuns", update.costSimulatorMonthlyRuns, target);
       await context.workspaceState.update(PATH_MODE_INITIALIZED_KEY, true);
-      profileActivePrompt();
     },
     onOpenAdvanced: async () => {
       await vscode.commands.executeCommand("workbench.action.openSettings", "@ext:promptguard");
@@ -116,61 +97,16 @@ export function activate(context: vscode.ExtensionContext): void {
         minimumPromptLength: settings.minimumPromptLength,
         assessmentPathMode: settings.assessmentPathMode,
         groqKeyMode: settings.groqKeyMode,
-        enableLiveTokenProfiler: settings.enableLiveTokenProfiler,
         enableBudgetMode: settings.enableBudgetMode,
-        enableLearningStore: settings.enableLearningStore,
-        costSimulatorMonthlyRuns: settings.costSimulatorMonthlyRuns
+        enableLearningStore: settings.enableLearningStore
       };
     }
   });
   const lintService = new PromptLintService(analyzer, policyService);
   const lintDiagnostics = vscode.languages.createDiagnosticCollection("promptguard");
-  const tokenProfilerStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 95);
-  tokenProfilerStatusBar.command = "promptguard.openTokenProfiler";
-  tokenProfilerStatusBar.tooltip = "Open PromptGuard live token profiler";
-  tokenProfilerStatusBar.text = "$(pulse) PromptGuard tokens";
-  tokenProfilerStatusBar.show();
   const syncOnboardingStatus = (): void => { navigator.setOnboardingState(onboarding.currentState()); };
   syncOnboardingStatus();
   let lastResult: AnalysisResult | undefined; let lastCloudPromptId: string | undefined; let lastPromptText: string | undefined; let lastLedger: PromptOptimizationLedger | undefined;
-  let profilerTimer: ReturnType<typeof setTimeout> | undefined;
-  let latestProfile: TokenProfileReport | undefined;
-
-  const updateProfilerSurface = (report: TokenProfileReport): void => {
-    latestProfile = report;
-    tokenProfilerStatusBar.text = `$(pulse) ${report.totalTokens} tok · ${report.potentialSavingsTokens} save · ${report.latencyMs}ms`;
-    tokenProfilerStatusBar.tooltip = `PromptGuard live profiler\nTotal tokens: ${report.totalTokens}\nInput cost: $${report.estimatedInputCostUsd.toFixed(6)}\nOutput cost: $${report.estimatedOutputCostUsd.toFixed(6)}\nMost expensive section: ${report.mostExpensiveSection?.label ?? "None"}`;
-    if (tokenProfilerPanel.hasPanel()) {
-      tokenProfilerPanel.update(report);
-    }
-  };
-
-  const profileActivePrompt = (): void => {
-    const settings = getSettings();
-    if (!settings.enabled || !settings.enableLiveTokenProfiler) {
-      tokenProfilerStatusBar.text = "$(pulse) Profiler off";
-      tokenProfilerStatusBar.tooltip = "Enable promptguard.enableLiveTokenProfiler to see live token intelligence.";
-      return;
-    }
-    const target = activeText();
-    if (!target || target.text.trim().length < settings.minimumPromptLength) {
-      tokenProfilerStatusBar.text = "$(pulse) PromptGuard tokens";
-      tokenProfilerStatusBar.tooltip = "Select a longer prompt to profile.";
-      return;
-    }
-    const report = tokenProfiler.profile({ text: target.text, uri: target.editor.document.uri.toString(), version: target.editor.document.version, pricing: settings.liveTokenPricing });
-    updateProfilerSurface(report);
-  };
-
-  const scheduleProfilerRefresh = (): void => {
-    if (profilerTimer) {
-      clearTimeout(profilerTimer);
-    }
-    profilerTimer = setTimeout(() => {
-      profilerTimer = undefined;
-      profileActivePrompt();
-    }, 220);
-  };
 
   const refreshDiagnostics = (document: vscode.TextDocument): void => {
     if (document.uri.scheme !== "file" && document.uri.scheme !== "untitled") {
@@ -265,10 +201,8 @@ export function activate(context: vscode.ExtensionContext): void {
       minimumPromptLength: settings.minimumPromptLength,
       assessmentPathMode: settings.assessmentPathMode,
       groqKeyMode: settings.groqKeyMode,
-      enableLiveTokenProfiler: settings.enableLiveTokenProfiler,
       enableBudgetMode: settings.enableBudgetMode,
-      enableLearningStore: settings.enableLearningStore,
-      costSimulatorMonthlyRuns: settings.costSimulatorMonthlyRuns
+      enableLearningStore: settings.enableLearningStore
     });
   };
 
@@ -420,37 +354,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     const document = await vscode.workspace.openTextDocument({ content: templateWorkbenchService.buildReusableTemplate(suggestion), language: "markdown" });
-    await vscode.window.showTextDocument(document, { preview: false });
-  };
-
-  const showLearningSummary = async (): Promise<void> => {
-    const summary = learningService.summarize();
-    if (!summary.loaded) {
-      vscode.window.showInformationMessage("PromptGuard: no learning signals recorded yet. Enable the learning store in settings to start collecting local summaries.");
-      return;
-    }
-
-    const lines = [
-      `# PromptGuard Learning Summary`,
-      ``,
-      `- Signals: ${summary.signalCount}`,
-      `- Accepted optimizations: ${summary.acceptedOptimizationCount}`,
-      `- Rejected optimizations: ${summary.rejectedOptimizationCount}`,
-      `- Average score: ${summary.averageScore?.toFixed(1) ?? "n/a"}`,
-      `- Average token savings: ${summary.averageTokenSavings?.toFixed(1) ?? "n/a"}`,
-      `- Average time saved: ${summary.averageTimeSavedMs?.toFixed(0) ?? "n/a"} ms`,
-      `- Total tokens saved: ${summary.totalTokenSavings.toFixed(0)}`,
-      `- Total time saved: ${summary.totalTimeSavedMs.toFixed(0)} ms`,
-      `- Privacy: prompt contents are not stored; only metadata is recorded for personalization.`,
-      ``,
-      `## Sources`,
-      ...Object.entries(summary.sourceCounts).map(([source, count]) => `- ${source}: ${count}`),
-      ``,
-      `## Issue Categories`,
-      ...Object.entries(summary.issueCategories).map(([category, count]) => `- ${category}: ${count}`)
-    ];
-
-    const document = await vscode.workspace.openTextDocument({ content: lines.join("\n"), language: "markdown" });
     await vscode.window.showTextDocument(document, { preview: false });
   };
 
@@ -753,16 +656,6 @@ export function activate(context: vscode.ExtensionContext): void {
     const keyStatus = await groqClient.keyStatus();
     vscode.window.showInformationMessage(`PromptGuard ${version} | onboarding=${onboarding.currentState()} | apiBaseUrl=${apiBaseUrl || "(empty)"} | groqKeyMode=${keyStatus.mode} | groqKeySource=${keyStatus.source}`);
   };
-  const openTokenProfiler = (): void => {
-    if (!latestProfile) {
-      profileActivePrompt();
-    }
-    if (latestProfile) {
-      tokenProfilerPanel.show(latestProfile);
-      return;
-    }
-    vscode.window.showInformationMessage("PromptGuard: select a longer prompt to open the live token profiler.");
-  };
   const openDuplicateDetection = async (): Promise<void> => {
     const promptText = await resolvePromptText({
       selectionFallbackPlaceholder: "No active prompt found. Choose duplicate detection input.",
@@ -774,43 +667,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     duplicateDetectionPanel.show(duplicateDetectionService.detect(promptText));
-  };
-  const openContextOptimizer = async (): Promise<void> => {
-    const promptText = await resolvePromptText({
-      selectionFallbackPlaceholder: "No active prompt found. Choose context optimizer input.",
-      inputTitle: "PromptGuard Context Optimizer",
-      inputPrompt: "Paste prompt text to optimize context"
-    });
-    if (!promptText) {
-      return;
-    }
-
-    contextOptimizerPanel.show(contextOptimizerService.optimize(promptText));
-  };
-  const openDeadCodeElimination = async (): Promise<void> => {
-    const promptText = await resolvePromptText({
-      selectionFallbackPlaceholder: "No active prompt found. Choose PDCE input.",
-      inputTitle: "PromptGuard Dead Code Elimination",
-      inputPrompt: "Paste prompt text to run dead code elimination analysis"
-    });
-    if (!promptText) {
-      return;
-    }
-
-    deadCodeEliminationPanel.show(deadCodeEliminationService.analyze(promptText));
-  };
-  const openCostSimulator = async (): Promise<void> => {
-    const promptText = await resolvePromptText({
-      selectionFallbackPlaceholder: "No active prompt found. Choose cost simulator input.",
-      inputTitle: "PromptGuard Cost Simulator",
-      inputPrompt: "Paste prompt text to estimate cost"
-    });
-    if (!promptText) {
-      return;
-    }
-
-    const settings = getSettings();
-    costSimulatorPanel.show(costSimulatorService.simulate(promptText, lastResult?.issues ?? [], settings.providerPricing, settings.costSimulatorMonthlyRuns));
   };
   const analyze = async (withGroq = true): Promise<void> => {
     const target = activeText(); const settings = getSettings(); if (!target || !settings.enabled) return;
@@ -855,7 +711,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.validateBudget", () => { void validateBudget(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.exportPromptHandoff", () => { void exportPromptHandoff(); }));
-  context.subscriptions.push(vscode.commands.registerCommand("promptguard.showLearningSummary", () => { void showLearningSummary(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.runBenchmarks", () => { void runBenchmarks(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.exportAuditReport", () => { void exportAuditReport(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.manageProviderOptIn", () => { void manageProviderOptIn(); }));
@@ -863,11 +718,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.browseTemplates", () => { void browseTemplates(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.insertTemplateSnippet", () => { void insertTemplateSnippet(); }));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.createReusableTemplate", () => { void createReusableTemplate(); }));
-  context.subscriptions.push(vscode.commands.registerCommand("promptguard.openTokenProfiler", openTokenProfiler));
-  context.subscriptions.push(vscode.commands.registerCommand("promptguard.openCostSimulator", openCostSimulator));
   context.subscriptions.push(vscode.commands.registerCommand("promptguard.openDuplicateDetection", () => { void openDuplicateDetection(); }));
-  context.subscriptions.push(vscode.commands.registerCommand("promptguard.openContextOptimizer", () => { void openContextOptimizer(); }));
-  context.subscriptions.push(vscode.commands.registerCommand("promptguard.openDeadCodeElimination", () => { void openDeadCodeElimination(); }));
   context.subscriptions.push(lintDiagnostics);
   context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ scheme: "untitled" }, new PromptGuardCodeActions(), { providedCodeActionKinds: PromptGuardCodeActions.providedCodeActionKinds }));
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => { refreshDiagnostics(document); }));
@@ -883,12 +734,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     refreshDiagnostics(event.document);
-    scheduleProfilerRefresh();
   }));
-  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => scheduleProfilerRefresh()));
-  context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(() => scheduleProfilerRefresh()));
-  context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(() => scheduleProfilerRefresh()));
-  scheduleProfilerRefresh();
 
   void ensurePathModeInitialized();
 

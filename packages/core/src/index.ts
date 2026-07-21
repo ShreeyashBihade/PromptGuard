@@ -1,0 +1,20 @@
+export * from "./types";
+export * from "./analysis/promptAst";
+export * from "./analysis/promptAstParser";
+export * from "./analysis/localPromptAdvisor";
+export * from "./analysis/rule";
+export * from "./analysis/promptAnalyzer";
+export * from "./cost/costEstimator";
+export * from "./heuristics/rules";
+export * from "./improver/optimizationPipeline";
+export * from "./improver/promptCompressionEngine";
+export * from "./improver/promptOptimizer";
+export * from "./config/settings";
+export * from "./telemetry/telemetry";
+export * from "./services/tokenProfiler";
+export * from "./services";
+export * from "./services/context/promptContextOptimizerService";
+export * from "./services/duplicates/promptDuplicateDetectionService";
+export * from "./scoring/promptScorer";
+
+export const coreVersion = "0.1.0";

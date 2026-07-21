@@ -16,7 +16,7 @@ export interface PromptBudgetViolation {
   readonly field: "maxTokens" | "maxInputCostUsd" | "maxOutputCostUsd" | "maxLatencyMs";
   readonly message: string;
   readonly suggestedFix: string;
-  readonly recommendedCommand: "promptguard.optimize" | "promptguard.openTokenProfiler";
+  readonly recommendedCommand: "promptguard.optimize";
 }
 
 export interface PromptBudgetReport {
@@ -87,7 +87,7 @@ export class PromptBudgetService {
       violations.push({ field: "maxOutputCostUsd", message: `Estimated output cost ${this.money(profile.estimatedOutputCostUsd)} exceeds budget ${this.money(budget.maxOutputCostUsd)}.`, suggestedFix: "Tighten the output format and ask for a shorter response.", recommendedCommand: "promptguard.optimize" });
     }
     if (typeof budget.maxLatencyMs === "number" && profile.latencyMs > budget.maxLatencyMs) {
-      violations.push({ field: "maxLatencyMs", message: `Estimated latency ${profile.latencyMs}ms exceeds budget ${budget.maxLatencyMs}ms.`, suggestedFix: "Shorten the prompt and use a more specific task statement to reduce processing time.", recommendedCommand: "promptguard.openTokenProfiler" });
+      violations.push({ field: "maxLatencyMs", message: `Estimated latency ${profile.latencyMs}ms exceeds budget ${budget.maxLatencyMs}ms.`, suggestedFix: "Shorten the prompt and use a more specific task statement to reduce processing time.", recommendedCommand: "promptguard.optimize" });
     }
 
     return violations;

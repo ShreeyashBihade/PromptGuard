@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: () => ({
+      get: (_key: string, defaultValue: unknown) => defaultValue
+    })
+  }
+}));
 import { PromptCompressionEngine } from "./promptCompressionEngine";
 
 describe("PromptCompressionEngine", () => {
@@ -33,4 +41,29 @@ Explain the result in plain language.`);
     expect(preview.reason).toContain("Replace");
     expect(preview.steps.some(step => step.label === "Collapse repeated constraints")).toBe(true);
   });
+
+  it("applies the broader minimize filters", () => {
+    const engine = new PromptCompressionEngine();
+    const preview = engine.compress(`{{customer_name}}
+
+Please note that the next section contains instructions.
+
+### Instructions
+Please ensure that you do keep the answer short.
+
+Example 1: Input A -> Output A
+
+Example 2: Input B -> Output B
+
+Example 3: Input C -> Output C
+
+Example 4: Input D -> Output D`);
+
+    expect(preview.optimizedPrompt).not.toContain("Please note that");
+    expect(preview.optimizedPrompt).not.toContain("Example 4");
+    expect(preview.steps.some(step => step.label === "Reorder static before variables")).toBe(true);
+    expect(preview.steps.some(step => step.label === "Prune few-shot examples")).toBe(true);
+    expect(preview.steps.some(step => step.label === "Optimize imperatives")).toBe(true);
+  });
+
 });

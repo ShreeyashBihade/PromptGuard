@@ -23,6 +23,6 @@ describe("PromptBudgetService", () => {
     expect(report.violationCount).toBeGreaterThan(0);
     expect(report.violations.some(violation => violation.field === "maxTokens")).toBe(true);
     expect(report.violations[0]?.suggestedFix.length ?? 0).toBeGreaterThan(0);
-    expect(["promptguard.optimize", "promptguard.openTokenProfiler"]).toContain(report.violations[0]?.recommendedCommand);
+    expect(report.violations[0]?.recommendedCommand).toBe("promptguard.optimize");
   });
 });

@@ -167,10 +167,8 @@ PromptGuard v2 should be layered, with a stable orchestration surface and modula
 3. **Analysis layer**
    - Lint rules
    - Duplicate detection
-   - Context optimizer
    - Policy validation
    - Budget checks
-   - Dead-code elimination recommendations
 
 4. **Optimization layer**
    - Deterministic compression rules
@@ -210,12 +208,10 @@ flowchart TD
   B --> C[Prompt AST]
   C --> D[Lint]
   C --> E[Duplicate Detection]
-  C --> F[Context Optimizer]
   C --> G[Compression Rules]
   C --> H[Cost Analyzer]
   D --> I[Diff Generator]
   E --> I
-  F --> I
   G --> I
   H --> I
   I --> J[Output / Diagnostics / Webviews]

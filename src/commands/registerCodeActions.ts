@@ -83,9 +83,7 @@ export class PromptGuardCodeActions implements vscode.CodeActionProvider {
           ? "PromptGuard: Reduce input cost"
           : "PromptGuard: Reduce token usage";
 
-    const command = code === "budget:maxLatencyMs"
-      ? "promptguard.openTokenProfiler"
-      : "promptguard.optimize";
+    const command = "promptguard.optimize";
 
     const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
     action.command = { command, title };
